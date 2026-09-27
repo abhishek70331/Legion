@@ -21,18 +21,18 @@ const COLUMNS = [
     { key: "record_date", label: "Date" },
     { key: "record_time", label: "Time", inputType: "time" },
 
-    { key: "loc1", label: "Loc1", inputType: "text" },
-    { key: "loc2", label: "Loc2", inputType: "text" },
-    { key: "loc3", label: "Loc3", inputType: "text" },
-    { key: "loc4", label: "Loc4", inputType: "text" },
-    { key: "loc5", label: "Loc5", inputType: "text" },
-    { key: "loc6", label: "Loc6", inputType: "text" },
-    { key: "loc7", label: "Loc7", inputType: "text" },
-    { key: "loc8", label: "Loc8", inputType: "text" },
-    { key: "loc9", label: "Loc9", inputType: "text" },
-    { key: "loc10", label: "Loc10", inputType: "text" },
-    { key: "loc11", label: "Loc11", inputType: "text" },
-    { key: "loc12", label: "Loc12", inputType: "text" },
+    { key: "loc1", label: "Loc-1", inputType: "number" },
+    { key: "loc2", label: "Loc-2", inputType: "number" },
+    { key: "loc3", label: "Loc-3", inputType: "number" },
+    { key: "loc4", label: "Loc-4", inputType: "number" },
+    { key: "loc5", label: "Loc-5", inputType: "number" },
+    { key: "loc6", label: "Loc-6", inputType: "number" },
+    { key: "loc7", label: "Loc-7", inputType: "number" },
+    { key: "loc8", label: "Loc-8", inputType: "number" },
+    { key: "loc9", label: "Loc-9", inputType: "number" },
+    { key: "loc10", label: "Loc-10", inputType: "number" },
+    { key: "loc11", label: "Loc-11", inputType: "number" },
+    { key: "loc12", label: "Loc-12", inputType: "number" },
 ];
 
 
@@ -387,13 +387,13 @@ export default function App() {
     const headingOptions =
         uniqueValues(
             allRecords,
-            "heading"
+            "Heading"
         );
 
     const customerOptions =
         uniqueValues(
             allRecords,
-            "customer_name"
+            "Customer_name"
         );
 
 
@@ -814,7 +814,8 @@ export default function App() {
             <header className="company-header">
 
                 <h1>
-                    LEGION INSULATOR
+                   
+                Legion Insulator Ultrasonic Testing Data
                 </h1>
 
             </header>
