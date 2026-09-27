@@ -152,6 +152,10 @@ app.post("/api/data", async (req, res) => {
             });
         }   
 
+        const headingUpper = heading.trim().toUpperCase();
+        const customerUpper = customer_name.trim().toUpperCase();
+        const uidUpper = uid.trim().toUpperCase();
+
         const query = `
             INSERT INTO records (
                 heading,
@@ -179,9 +183,9 @@ app.post("/api/data", async (req, res) => {
             RETURNING *
         `;
         const values = [
-            heading,
-            customer_name,
-            uid,
+            headingUpper,
+            customerUpper,
+            uidUpper,
             record_date,
             record_time,
             loc1,
@@ -210,7 +214,7 @@ app.post("/api/data", async (req, res) => {
 
         if (error.code === "23505") {
             return res.status(409).json({
-                message: "Heading, UID and Customer Name combination already exists hello"
+                message: "Heading, UID and Customer Name combination already exists"
             });
         }
 
