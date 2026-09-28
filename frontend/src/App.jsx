@@ -815,7 +815,7 @@ export default function App() {
 
                 <h1>
                    
-                AMAN  aman aman
+                Legion Insulator Ultrasonic Testing Data (made by Aman)
                 </h1>
 
             </header>
