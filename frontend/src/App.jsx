@@ -21,7 +21,7 @@ const COLUMNS = [
     { key: "record_date", label: "Date" },
     { key: "record_time", label: "Time", inputType: "time" },
 
-    { key: "loc1", label: "Loc-1", inputType: "number" },
+    { key: "loc1", label: "Loc-1", inputType: "text" },
     { key: "loc2", label: "Loc-2", inputType: "number" },
     { key: "loc3", label: "Loc-3", inputType: "number" },
     { key: "loc4", label: "Loc-4", inputType: "number" },
@@ -815,7 +815,7 @@ export default function App() {
 
                 <h1>
                    
-                Legion Insulator Ultrasonic Testing Data
+                AMAN  aman aman
                 </h1>
 
             </header>
