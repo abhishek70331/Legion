@@ -9,7 +9,10 @@ import {
     searchRecords,
     updateRecord,
     deleteRecord,
+<<<<<<< HEAD
     getLast7DaysSummary,
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
     getErrorMessage,
 } from "./api.js";
 
@@ -376,9 +379,12 @@ function MainApp() {
     const [searchUid, setSearchUid] =
         useState("");
 
+<<<<<<< HEAD
     const [searchDate, setSearchDate] =
         useState("");
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
     const [searchResults, setSearchResults] =
         useState([]);
 
@@ -408,6 +414,7 @@ function MainApp() {
     const [loadingAll, setLoadingAll] =
         useState(false);
 
+<<<<<<< HEAD
     /* -----------------------------------------------------
        LAST 7 DAYS SUMMARY
     ----------------------------------------------------- */
@@ -419,6 +426,8 @@ function MainApp() {
         text: "",
     });
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 
     /* -----------------------------------------------------
        DROPDOWN OPTIONS
@@ -468,6 +477,7 @@ function MainApp() {
        LOAD ALL RECORDS
     ===================================================== */
 
+<<<<<<< HEAD
     const loadLast7Days = async () => {
         setLoadingLast7Days(true);
         setLast7DaysMessage({ type: "", text: "" });
@@ -487,6 +497,8 @@ function MainApp() {
     };
 
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
     const loadAllRecords = async () => {
 
         setLoadingAll(true);
@@ -502,7 +514,10 @@ function MainApp() {
                 await getAllRecords();
 
             applyRecords(data);
+<<<<<<< HEAD
             await loadLast7Days();
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 
         } catch (error) {
 
@@ -530,7 +545,10 @@ function MainApp() {
     useEffect(() => {
 
         loadAllRecords();
+<<<<<<< HEAD
         loadLast7Days();
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 
     }, []);
 
@@ -762,7 +780,10 @@ function MainApp() {
             setEditingRecord(null);
             setEditMessage({ type: "success", text: "Record updated successfully." });
             await loadAllRecords();
+<<<<<<< HEAD
             await loadLast7Days();
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
         } catch (error) {
             setEditMessage({ type: "error", text: getErrorMessage(error, "Failed to update record.") });
         } finally {
@@ -783,7 +804,10 @@ function MainApp() {
             });
             setAllMessage({ type: "success", text: "Record deleted successfully." });
             await loadAllRecords();
+<<<<<<< HEAD
             await loadLast7Days();
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
         } catch (error) {
             setAllMessage({ type: "error", text: getErrorMessage(error, "Failed to delete record.") });
         }
@@ -826,8 +850,12 @@ function MainApp() {
         if (
             !heading &&
             !customerName &&
+<<<<<<< HEAD
             !uid &&
             !searchDate
+=======
+            !uid
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
         ) {
 
             setSearchMessage({
@@ -863,9 +891,12 @@ function MainApp() {
                         customerName,
 
                     uid,
+<<<<<<< HEAD
 
                     record_date:
                         searchDate,
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
                 });
 
 
@@ -913,8 +944,11 @@ function MainApp() {
 
         setSearchUid("");
 
+<<<<<<< HEAD
         setSearchDate("");
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
         setSearchResults([]);
 
         setSearchMessage({
@@ -960,6 +994,7 @@ function MainApp() {
 
             </header>
 
+<<<<<<< HEAD
             <section className="dashboard-hero content">
                 <div className="dashboard-hero-copy">
                     <span className="hero-overline">LEGION OPERATIONS</span>
@@ -974,6 +1009,8 @@ function MainApp() {
                     </div>
                 </div>
             </section>
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 
             {/* =================================================get
                 DROPDOWNS
@@ -1232,8 +1269,13 @@ function MainApp() {
 
                     <p className="search-help">
                         Enter any one or combination
+<<<<<<< HEAD
                         of Heading, Customer Name, UID or
                         Date.
+=======
+                        of Heading, Customer Name or
+                        UID.
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
                     </p>
 
 
@@ -1311,6 +1353,7 @@ function MainApp() {
                         />
 
 
+<<<<<<< HEAD
                         {/* DATE */}
 
                         <label htmlFor="search-date">
@@ -1326,6 +1369,8 @@ function MainApp() {
                             }
                         />
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
                         {/* BUTTONS */}
 
                         <div className="search-buttons">
@@ -1458,6 +1503,7 @@ function MainApp() {
 
                 </section>
 
+<<<<<<< HEAD
                 {/* =================================================
                     LAST 7 DAYS DATA ENTRY SUMMARY
                 ================================================= */}
@@ -1524,6 +1570,8 @@ function MainApp() {
                     )}
                 </section>
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
                 {editingRecord && isAdmin && (
                     <div className="record-modal-backdrop" onClick={() => !editSaving && setEditingRecord(null)}>
                         <div className="record-modal" onClick={(e) => e.stopPropagation()}>

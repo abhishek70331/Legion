@@ -299,9 +299,15 @@ app.get("/api/data", requireAuth, async (req, res) => {
 
 app.get("/api/data/search", requireAuth, async (req, res) => {
     try {
+<<<<<<< HEAD
         const { heading, uid, customer_name, record_date } = req.query;
 
         if (!heading && !uid && !customer_name && !record_date) {
+=======
+        const { heading, uid, customer_name } = req.query;
+
+        if (!heading && !uid && !customer_name) {
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
             return res.status(400).json({
                 message: "Please provide at least one search field"
             });
@@ -334,12 +340,15 @@ app.get("/api/data/search", requireAuth, async (req, res) => {
             paramIndex++;
         }
 
+<<<<<<< HEAD
         if (record_date) {
             query += ` AND record_date = $${paramIndex}`;
             values.push(record_date);
             paramIndex++;
         }
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
         query += `
             ORDER BY record_date DESC, record_time DESC
         `;
@@ -357,6 +366,7 @@ app.get("/api/data/search", requireAuth, async (req, res) => {
 });
 
 
+<<<<<<< HEAD
 app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
     try {
         const result = await pool.query(`
@@ -399,6 +409,8 @@ app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
 });
 
 
+=======
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 app.patch("/api/data", requireAuth, requireAdmin, async (req, res) => {
     try {
         const { original_heading, original_customer_name, original_uid, ...record } = req.body || {};

@@ -1,9 +1,13 @@
+<<<<<<< HEAD
 const { Pool, types } = require("pg");
 
 // Keep PostgreSQL DATE values as YYYY-MM-DD strings. Converting DATE to a
 // JavaScript Date can shift the displayed date by one day because of timezone
 // conversion (for example, 28-09-2026 becoming 27-09-2026).
 types.setTypeParser(1082, (value) => value);
+=======
+const { Pool } = require("pg");
+>>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 require("dotenv").config();
 
 const pool = new Pool({
