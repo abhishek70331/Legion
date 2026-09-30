@@ -53,14 +53,11 @@ export const getAllRecords = async () => {
     return response.data;
 };
 
-<<<<<<< HEAD
 export const getLast7DaysSummary = async () => {
     const response = await api.get("/data/last-7-days");
     return response.data;
 };
 
-=======
->>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
 export const createRecord = async (data) => {
     const response = await api.post("/data", data);
     return response.data;
@@ -79,15 +76,9 @@ export const deleteRecord = async ({ heading, customer_name, uid }) => {
 };
 
 
-<<<<<<< HEAD
 export const searchRecords = async ({ heading, customer_name, uid, record_date }) => {
     const response = await api.get("/data/search", {
         params: { heading, customer_name, uid, record_date }
-=======
-export const searchRecords = async ({ heading, customer_name, uid }) => {
-    const response = await api.get("/data/search", {
-        params: { heading, customer_name, uid }
->>>>>>> 467f32d4cfeddb19c629f91a8257ffa9e0100a9f
     });
     return response.data;
 };
