@@ -932,3 +932,17 @@ input[readonly] {
   .header-row h1 { font-size: 0.9rem; }
   .record-modal-actions .btn { flex: 1; }
 }
+
+
+.shift-c { background: rgba(16, 185, 129, 0.13); border-color: #10b981; }
+.date-summary-search { margin-top: 1.5rem; padding-top: 1.5rem; border-top: 1px solid var(--border); }
+.date-summary-search h3 { margin: 0.2rem 0 0.25rem; }
+.date-summary-controls { display: flex; gap: 0.8rem; align-items: flex-end; margin-top: 1rem; flex-wrap: wrap; }
+.date-summary-controls label { display: grid; gap: 0.35rem; }
+.date-summary-controls label span { font-size: 0.8rem; font-weight: 600; color: var(--text-2); }
+.date-summary-controls input { min-height: 44px; padding: 0.65rem 0.8rem; border: 1px solid var(--border-strong); border-radius: 10px; background: var(--surface); color: var(--text); }
+.date-summary-result { display: grid; grid-template-columns: repeat(4, minmax(120px, 1fr)); gap: 0.8rem; margin-top: 1rem; }
+.date-summary-result > div { padding: 0.9rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2, #f8fafc); }
+.date-summary-result span { display:block; font-size:0.78rem; color:var(--text-2); }
+.date-summary-result strong { display:block; margin-top:0.2rem; font-size:1.6rem; }
+@media (max-width: 800px) { .date-summary-result { grid-template-columns: repeat(2, 1fr); } }

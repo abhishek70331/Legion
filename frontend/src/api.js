@@ -62,6 +62,11 @@ export const getLast7DaysSummary = async () => {
     return response.data;
 };
 
+export const getDateSummary = async (date) => {
+    const response = await api.get("/data/date-summary", { params: { date } });
+    return response.data;
+};
+
 export const createRecord = async (data) => {
     const response = await api.post("/data", data);
     return response.data;

@@ -10,6 +10,7 @@ import {
     updateRecord,
     deleteRecord,
     getLast7DaysSummary,
+    getDateSummary,
     getErrorMessage,
 } from "./api.js";
 
@@ -419,6 +420,21 @@ function MainApp() {
         text: "",
     });
 
+    /* -----------------------------------------------------
+       DATE-WISE SUMMARY
+    ----------------------------------------------------- */
+
+    const [selectedSummaryDate, setSelectedSummaryDate] = useState(() => {
+        const now = new Date();
+        const hour = now.getHours();
+        const base = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        if (hour < 6) base.setDate(base.getDate() - 1);
+        return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
+    });
+
+    const [dateSummary, setDateSummary] = useState(null);
+    const [dateSummaryLoading, setDateSummaryLoading] = useState(false);
+
 
     /* -----------------------------------------------------
        DROPDOWN OPTIONS
@@ -487,6 +503,21 @@ function MainApp() {
     };
 
 
+    const loadDateSummary = async () => {
+        if (!selectedSummaryDate) return;
+        setDateSummaryLoading(true);
+        try {
+            const data = await getDateSummary(selectedSummaryDate);
+            setDateSummary(data);
+        } catch (error) {
+            setDateSummary(null);
+            setLast7DaysMessage({ type: "error", text: getErrorMessage(error, "Failed to load date summary.") });
+        } finally {
+            setDateSummaryLoading(false);
+        }
+    };
+
+
     const loadAllRecords = async () => {
 
         setLoadingAll(true);
@@ -531,6 +562,13 @@ function MainApp() {
 
         loadAllRecords();
         loadLast7Days();
+
+        // Keep the dashboard summary current while the page is open.
+        const summaryInterval = setInterval(() => {
+            loadLast7Days();
+        }, 10000);
+
+        return () => clearInterval(summaryInterval);
 
     }, []);
 
@@ -665,15 +703,39 @@ function MainApp() {
             });
 
 
-            await createRecord(
-                payload
+            const createResponse = await createRecord(payload);
+
+            // Confirm the database can immediately return the exact record that
+            // the API just reported as inserted. This prevents a false
+            // "Record saved successfully" message when the save did not
+            // actually reach the database used by the app.
+            const verificationRows = await searchRecords({
+                heading,
+                customer_name: customerName,
+                uid,
+                record_date: recordDate,
+            });
+
+            const normalizedHeading = String(heading).trim().toUpperCase();
+            const normalizedCustomer = String(customerName).trim().toUpperCase();
+            const normalizedUid = String(uid).trim().toUpperCase();
+
+            const savedRow = verificationRows.find((row) =>
+                String(row.heading || "").trim().toUpperCase() === normalizedHeading &&
+                String(row.customer_name || "").trim().toUpperCase() === normalizedCustomer &&
+                String(row.uid || "").trim().toUpperCase() === normalizedUid &&
+                String(row.record_date || "").slice(0, 10) === String(recordDate).slice(0, 10)
             );
 
+            if (!createResponse?.data || !savedRow) {
+                throw new Error(
+                    "The record could not be verified in the database. It was not marked as saved."
+                );
+            }
 
             setSaveMessage({
                 type: "success",
-                text:
-                    "Record saved successfully.",
+                text: "Record saved successfully and verified in the database.",
             });
 
 
@@ -701,6 +763,9 @@ function MainApp() {
                 await getAllRecords();
 
             applyRecords(data);
+
+            // Refresh the 7-day summary immediately after a new record is saved.
+            await loadLast7Days();
 
 
         } catch (error) {
@@ -1375,7 +1440,6 @@ function MainApp() {
                         <div>
                             <span className="section-kicker">DATA ENTRY SUMMARY</span>
                             <h2>Last 7 Days - Shift Wise</h2>
-                            <p className="section-subtitle">Daily data entry split by A Shift (6 AM-2 PM) and B Shift (2 PM-10 PM).</p>
                         </div>
                         <button
                             type="button"
@@ -1421,15 +1485,39 @@ function MainApp() {
                                         <small>14:00-22:00</small>
                                     </div>
 
-                                    {(day.outside_shift_count ?? 0) > 0 && (
-                                        <div className="shift-outside">
-                                            Outside shift: {day.outside_shift_count}
-                                        </div>
-                                    )}
+                                    <div className="shift-row shift-c">
+                                        <span>C Shift</span>
+                                        <strong>{day.c_shift_count ?? 0}</strong>
+                                        <small>22:00-06:00</small>
+                                    </div>
                                 </div>
                             ))}
                         </div>
                     )}
+
+                    <div className="date-summary-search">
+                        <div>
+                            <span className="section-kicker">DATE-WISE TOTAL</span>
+                            <h3>Search Total Data for a Date</h3>
+                        </div>
+                        <div className="date-summary-controls">
+                            <label>
+                                <span>Date</span>
+                                <input type="date" value={selectedSummaryDate} onChange={(e) => setSelectedSummaryDate(e.target.value)} />
+                            </label>
+                            <button type="button" className="btn btn-primary" onClick={loadDateSummary} disabled={!selectedSummaryDate || dateSummaryLoading}>
+                                {dateSummaryLoading ? "Loading..." : "View Total"}
+                            </button>
+                        </div>
+                        {dateSummary && (
+                            <div className="date-summary-result">
+                                <div><span>Total Data</span><strong>{dateSummary.data_count ?? 0}</strong></div>
+                                <div><span>A Shift</span><strong>{dateSummary.a_shift_count ?? 0}</strong></div>
+                                <div><span>B Shift</span><strong>{dateSummary.b_shift_count ?? 0}</strong></div>
+                                <div><span>C Shift</span><strong>{dateSummary.c_shift_count ?? 0}</strong></div>
+                            </div>
+                        )}
+                    </div>
                 </section>
 
                 {editingRecord && isAdmin && (

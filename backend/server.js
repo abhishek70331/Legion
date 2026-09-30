@@ -14,10 +14,19 @@ const {
 
 const app = express();
 
-const frontendUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+const allowedOrigins = (process.env.FRONTEND_URL || "http://localhost:5173")
+    .split(",")
+    .map((url) => url.trim().replace(/\/+$/, ""))
+    .filter(Boolean);
 
 app.use(cors({
-    origin: frontendUrl,
+    origin(origin, callback) {
+        // Allow non-browser tools (no Origin header) and any listed frontend.
+        if (!origin || allowedOrigins.includes(origin)) {
+            return callback(null, true);
+        }
+        return callback(new Error(`Origin not allowed by CORS: ${origin}`));
+    },
     credentials: true
 }));
 app.use(express.json());
@@ -360,31 +369,58 @@ app.get("/api/data/search", requireAuth, async (req, res) => {
 app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
     try {
         const result = await pool.query(`
-            WITH days AS (
+            WITH settings AS (
+                SELECT GREATEST(
+                    CASE
+                        WHEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::time < TIME '06:00:00'
+                            THEN (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date - 1
+                        ELSE (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date
+                    END,
+                    COALESCE((
+                        SELECT MAX(
+                            CASE
+                                WHEN record_time < TIME '06:00:00' THEN record_date - 1
+                                ELSE record_date
+                            END
+                        )
+                        FROM records
+                    ), (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata')::date)
+                ) AS end_date
+            ),
+            days AS (
                 SELECT generate_series(
-                    CURRENT_DATE - INTERVAL '6 days',
-                    CURRENT_DATE,
+                    (SELECT end_date FROM settings) - INTERVAL '6 days',
+                    (SELECT end_date FROM settings),
                     INTERVAL '1 day'
                 )::date AS record_date
+            ),
+            classified AS (
+                SELECT
+                    CASE
+                        WHEN record_time < TIME '06:00:00' THEN record_date - 1
+                        ELSE record_date
+                    END AS shift_date,
+                    record_time
+                FROM records
             )
             SELECT
                 TO_CHAR(days.record_date, 'YYYY-MM-DD') AS record_date,
-                COUNT(records.record_date)::int AS data_count,
-                COUNT(records.record_date) FILTER (
-                    WHERE records.record_time >= TIME '06:00:00'
-                      AND records.record_time < TIME '14:00:00'
+                COUNT(classified.shift_date)::int AS data_count,
+                COUNT(classified.shift_date) FILTER (
+                    WHERE classified.record_time >= TIME '06:00:00'
+                      AND classified.record_time < TIME '14:00:00'
                 )::int AS a_shift_count,
-                COUNT(records.record_date) FILTER (
-                    WHERE records.record_time >= TIME '14:00:00'
-                      AND records.record_time < TIME '22:00:00'
+                COUNT(classified.shift_date) FILTER (
+                    WHERE classified.record_time >= TIME '14:00:00'
+                      AND classified.record_time < TIME '22:00:00'
                 )::int AS b_shift_count,
-                COUNT(records.record_date) FILTER (
-                    WHERE records.record_time < TIME '06:00:00'
-                       OR records.record_time >= TIME '22:00:00'
-                )::int AS outside_shift_count
+                COUNT(classified.shift_date) FILTER (
+                    WHERE classified.record_time >= TIME '22:00:00'
+                       OR classified.record_time < TIME '06:00:00'
+                )::int AS c_shift_count
             FROM days
-            LEFT JOIN records
-                ON records.record_date = days.record_date
+            LEFT JOIN classified
+                ON classified.shift_date = days.record_date
             GROUP BY days.record_date
             ORDER BY days.record_date DESC
         `);
@@ -398,6 +434,49 @@ app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
     }
 });
 
+
+app.get("/api/data/date-summary", requireAuth, async (req, res) => {
+    try {
+        const requestedDate = String(req.query.date || "").trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+            return res.status(400).json({ message: "A valid date is required (YYYY-MM-DD)" });
+        }
+
+        const result = await pool.query(`
+            WITH classified AS (
+                SELECT
+                    record_time,
+                    CASE
+                        WHEN record_time < TIME '06:00:00' THEN record_date - 1
+                        ELSE record_date
+                    END AS shift_date
+                FROM records
+            )
+            SELECT
+                $1::date::text AS record_date,
+                COUNT(*)::int AS data_count,
+                COUNT(*) FILTER (
+                    WHERE record_time >= TIME '06:00:00'
+                      AND record_time < TIME '14:00:00'
+                )::int AS a_shift_count,
+                COUNT(*) FILTER (
+                    WHERE record_time >= TIME '14:00:00'
+                      AND record_time < TIME '22:00:00'
+                )::int AS b_shift_count,
+                COUNT(*) FILTER (
+                    WHERE record_time >= TIME '22:00:00'
+                       OR record_time < TIME '06:00:00'
+                )::int AS c_shift_count
+            FROM classified
+            WHERE shift_date = $1::date
+        `, [requestedDate]);
+
+        res.json(result.rows[0]);
+    } catch (error) {
+        console.error("Error fetching date summary:", error);
+        res.status(500).json({ message: "Failed to fetch date summary" });
+    }
+});
 
 app.patch("/api/data", requireAuth, requireAdmin, async (req, res) => {
     try {
@@ -565,9 +644,19 @@ app.post("/api/data", requireAuth, async (req, res) => {
 
         const result = await pool.query(query, values);
 
+        // Never report success unless PostgreSQL actually inserted a row.
+        if (result.rowCount !== 1 || !result.rows[0]) {
+            console.error("Record INSERT returned no row.");
+            return res.status(500).json({
+                message: "Record was not saved to the database"
+            });
+        }
+
+        const savedRecord = result.rows[0];
+
         res.status(201).json({
             message: "Record created successfully",
-            data: result.rows[0]
+            data: savedRecord
         });
     } catch (error) {
         console.error("Error creating record:", error);
