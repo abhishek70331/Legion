@@ -21,7 +21,7 @@ import "./App.css";
 ========================================================= */
 
 const COLUMNS = [
-    { key: "heading", label: "Heading" },
+    { key: "heading", label: "heading" },
     { key: "customer_name", label: "Customer Name" },
     { key: "uid", label: "UID", inputType: "text" },
     { key: "record_date", label: "Date" },
@@ -334,7 +334,7 @@ function RecordsTable({ rows, isAdmin = false, onEdit, onDelete }) {
 
 function MainApp() {
 
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
     const isAdmin = user?.role === "admin";
 
     /* -----------------------------------------------------
@@ -427,13 +427,13 @@ function MainApp() {
     const headingOptions =
         uniqueValues(
             allRecords,
-            "Heading"
+            "heading"
         );
 
     const customerOptions =
         uniqueValues(
             allRecords,
-            "Customer_name"
+            "customer_name"
         );
 
 
@@ -950,11 +950,16 @@ function MainApp() {
             <header className="company-header">
 
                 <div className="header-row">
-                    <h1>Legion Insulator Ultrasonic Testing Data (made by Aman)</h1>
+                    <h1>
+                        <span>
+                            Legion Insulator Ultrasonic Testing
+                            <span className="header-title-sub">Inspection data · made by Aman</span>
+                        </span>
+                    </h1>
                     <div className="header-user">
-                        <span>Logged in: <strong>{useAuth().user?.username}</strong></span>
-                        {useAuth().user?.role === "admin" && <span className="role-badge">ADMIN</span>}
-                        <button type="button" className="btn btn-light" onClick={useAuth().logout}>Logout</button>
+                        <span>Logged in: <strong>{user?.username}</strong></span>
+                        {isAdmin && <span className="role-badge">ADMIN</span>}
+                        <button type="button" className="btn btn-light" onClick={logout}>Logout</button>
                     </div>
                 </div>
 
@@ -970,12 +975,12 @@ function MainApp() {
                     <div className="hero-status-pill"><span className="status-pulse"></span> System online</div>
                     <div className="hero-role-card">
                         <span className="hero-role-label">ACCESS LEVEL</span>
-                        <strong>{useAuth().user?.role === "admin" ? "Administrator" : "Operator"}</strong>
+                        <strong>{isAdmin ? "Administrator" : "Operator"}</strong>
                     </div>
                 </div>
             </section>
 
-            {/* =================================================get
+            {/* =================================================
                 DROPDOWNS
             ================================================= */}
 
@@ -1011,7 +1016,7 @@ function MainApp() {
             </datalist>
 
 
-            {useAuth().user?.role === "admin" && <div className="content"><UserManagement /></div>}
+            {isAdmin && <div className="content"><UserManagement /></div>}
 
             <main className="content">
 
@@ -1027,161 +1032,68 @@ function MainApp() {
                     </h2>
 
 
-                    <div className="table-scroll">
+                    <div className="record-form">
 
-                        <table className="data-table input-table">
+                        <div>
+                            <p className="form-group-title">Record details</p>
+                            <div className="field-grid field-grid-main">
+                                <label className="field">
+                                    <span>Heading</span>
+                                    <input
+                                        type="text"
+                                        list="heading-options"
+                                        value={form.heading}
+                                        onChange={(e) => handleFormChange("heading", e.target.value)}
+                                        placeholder="Select or type heading"
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Customer Name</span>
+                                    <input
+                                        type="text"
+                                        list="customer-options"
+                                        value={form.customer_name}
+                                        onChange={(e) => handleFormChange("customer_name", e.target.value)}
+                                        placeholder="Select or type customer"
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>UID</span>
+                                    <input
+                                        type="text"
+                                        value={form.uid}
+                                        onChange={(e) => handleFormChange("uid", e.target.value)}
+                                        placeholder="UID"
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Date (auto)</span>
+                                    <input type="date" value={form.record_date} readOnly className="readonly-input" />
+                                </label>
+                                <label className="field">
+                                    <span>Time (auto)</span>
+                                    <input type="time" value={form.record_time.slice(0, 5)} readOnly className="readonly-input" />
+                                </label>
+                            </div>
+                        </div>
 
-                            <thead>
-
-                                <tr>
-
-                                    {COLUMNS.map(
-                                        (col) => (
-
-                                            <th
-                                                key={col.key}
-                                            >
-                                                {col.label}
-                                            </th>
-
-                                        )
-                                    )}
-
-                                </tr>
-
-                            </thead>
-
-
-                            <tbody>
-
-                                <tr>
-
-                                    {COLUMNS.map(
-                                        (col) => (
-
-                                            <td
-                                                key={col.key}
-                                            >
-
-                                                {/* HEADING */}
-
-                                                {col.key ===
-                                                "heading" ? (
-
-                                                    <input
-                                                        type="text"
-                                                        list="heading-options"
-                                                        value={
-                                                            form.heading
-                                                        }
-                                                        onChange={
-                                                            (e) =>
-                                                                handleFormChange(
-                                                                    "heading",
-                                                                    e.target.value
-                                                                )
-                                                        }
-                                                        placeholder="Select or type heading"
-                                                    />
-
-
-                                                ) : col.key ===
-                                                "customer_name" ? (
-
-
-                                                    /* CUSTOMER */
-
-                                                    <input
-                                                        type="text"
-                                                        list="customer-options"
-                                                        value={
-                                                            form.customer_name
-                                                        }
-                                                        onChange={
-                                                            (e) =>
-                                                                handleFormChange(
-                                                                    "customer_name",
-                                                                    e.target.value
-                                                                )
-                                                        }
-                                                        placeholder="Select or type customer"
-                                                    />
-
-
-                                                ) : col.key ===
-                                                "record_date" ? (
-
-
-                                                    /* DATE */
-
-                                                    <input
-                                                        type="date"
-                                                        value={
-                                                            form.record_date
-                                                        }
-                                                        readOnly
-                                                        className="readonly-input"
-                                                    />
-
-
-                                                ) : col.key ===
-                                                "record_time" ? (
-
-
-                                                    /* TIME */
-
-                                                    <input
-                                                        type="time"
-                                                        value={
-                                                            form.record_time.slice(
-                                                                0,
-                                                                5
-                                                            )
-                                                        }
-                                                        readOnly
-                                                        className="readonly-input"
-                                                    />
-
-
-                                                ) : (
-
-
-                                                    /* OTHER FIELDS */
-
-                                                    <input
-                                                        type={
-                                                            col.inputType ||
-                                                            "text"
-                                                        }
-                                                        value={
-                                                            form[
-                                                                col.key
-                                                            ] ?? ""
-                                                        }
-                                                        onChange={
-                                                            (e) =>
-                                                                handleFormChange(
-                                                                    col.key,
-                                                                    e.target.value
-                                                                )
-                                                        }
-                                                        placeholder={
-                                                            col.label
-                                                        }
-                                                    />
-
-                                                )}
-
-                                            </td>
-
-                                        )
-                                    )}
-
-                                </tr>
-
-                            </tbody>
-
-                        </table>
+                        <div>
+                            <p className="form-group-title">Readings</p>
+                            <div className="field-grid field-grid-loc">
+                                {COLUMNS.filter((col) => LOC_KEYS.includes(col.key)).map((col) => (
+                                    <label className="field" key={col.key}>
+                                        <span>{col.label}</span>
+                                        <input
+                                            type="number"
+                                            inputMode="decimal"
+                                            value={form[col.key] ?? ""}
+                                            onChange={(e) => handleFormChange(col.key, e.target.value)}
+                                            placeholder="0"
+                                        />
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
 
                     </div>
 
@@ -1245,11 +1157,9 @@ function MainApp() {
 
                         {/* HEADING */}
 
-                        <label htmlFor="search-heading">
-                            Heading
-                        </label>
-
-                        <input
+                        <div className="search-field">
+                            <label htmlFor="search-heading">Heading</label>
+<input
                             id="search-heading"
                             type="text"
                             list="heading-options"
@@ -1264,15 +1174,14 @@ function MainApp() {
                             }
                             placeholder="Select or type heading"
                         />
+                        </div>
 
 
                         {/* CUSTOMER */}
 
-                        <label htmlFor="search-customer">
-                            Customer Name
-                        </label>
-
-                        <input
+                        <div className="search-field">
+                            <label htmlFor="search-customer">Customer Name</label>
+<input
                             id="search-customer"
                             type="text"
                             list="customer-options"
@@ -1287,15 +1196,14 @@ function MainApp() {
                             }
                             placeholder="Select or type customer"
                         />
+                        </div>
 
 
                         {/* UID */}
 
-                        <label htmlFor="search-uid">
-                            UID
-                        </label>
-
-                        <input
+                        <div className="search-field">
+                            <label htmlFor="search-uid">UID</label>
+<input
                             id="search-uid"
                             type="text"
                             value={
@@ -1309,15 +1217,14 @@ function MainApp() {
                             }
                             placeholder="Enter UID"
                         />
+                        </div>
 
 
                         {/* DATE */}
 
-                        <label htmlFor="search-date">
-                            Date
-                        </label>
-
-                        <input
+                        <div className="search-field">
+                            <label htmlFor="search-date">Date</label>
+<input
                             id="search-date"
                             type="date"
                             value={searchDate}
@@ -1325,6 +1232,7 @@ function MainApp() {
                                 setSearchDate(e.target.value)
                             }
                         />
+                        </div>
 
                         {/* BUTTONS */}
 

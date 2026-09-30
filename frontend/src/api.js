@@ -1,6 +1,10 @@
 import axios from "axios";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+// Dev: falls back to the local backend. Production (Vercel): set VITE_API_URL.
+const API_URL = (
+    import.meta.env.VITE_API_URL ||
+    (import.meta.env.DEV ? "http://localhost:5000/api" : "/api")
+).replace(/\/+$/, "");
 
 // Authentication is intentionally kept only in JavaScript memory.
 // Therefore a full page refresh/reload clears the token and shows Login again.
