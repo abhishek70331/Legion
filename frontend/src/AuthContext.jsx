@@ -10,25 +10,21 @@ import {
 
 const AuthContext = createContext(null);
 
-// How often a signed-in browser re-checks its session with the server. This is
-// what makes "Force logout", bans take effect within
-// seconds, even if the user is not clicking anything.
-const SESSION_CHECK_MS = 30 * 1000;
+const SESSION_CHECK_MS = 25 * 1000;
 
 export function AuthProvider({ children }) {
     const [user, setUser] = useState(null);
+    const [permissions, setPermissions] = useState({});
     const [loading] = useState(false);
-    // Message shown on the login page after the session ended unexpectedly.
     const [notice, setNotice] = useState(null);
 
     const endSession = useCallback((nextNotice = null) => {
         clearAuthToken();
         setUser(null);
+        setPermissions({});
         setNotice(nextNotice);
     }, []);
 
-    // Intentionally do NOT restore authentication from localStorage/sessionStorage.
-    // A full browser refresh starts a new React session and therefore requires login again.
     useEffect(() => {
         clearAuthToken();
         localStorage.removeItem("legion_token");
@@ -46,7 +42,7 @@ export function AuthProvider({ children }) {
         return () => setUnauthorizedHandler(null);
     }, [endSession]);
 
-    // Keep the session fresh while signed in.
+    // Keep session and permissions fresh while signed in
     useEffect(() => {
         if (!user) return undefined;
 
@@ -54,20 +50,24 @@ export function AuthProvider({ children }) {
 
         const check = async () => {
             try {
-                const current = await getCurrentUser();
+                const data = await getCurrentUser();
                 if (cancelled) return;
 
-                setUser((previous) => {
-                    if (!previous) return previous;
-                    const same =
-                        previous.role === current.role &&
-                        previous.username === current.username &&
-                        true;
-                    return same ? previous : { ...previous, ...current };
-                });
+                if (data.user) {
+                    setUser((prev) => {
+                        if (!prev) return data.user;
+                        const isSame =
+                            prev.role === data.user.role &&
+                            prev.username === data.user.username &&
+                            prev.status === data.user.status;
+                        return isSame ? prev : { ...prev, ...data.user };
+                    });
+                }
+                if (data.permissions) {
+                    setPermissions(data.permissions);
+                }
             } catch {
-                // A 401 is handled by the API interceptor (it ends the session).
-                // Network hiccups are ignored and retried on the next check.
+                // Handled by unauthorizedHandler if 401
             }
         };
 
@@ -85,35 +85,62 @@ export function AuthProvider({ children }) {
             document.removeEventListener("visibilitychange", onVisible);
             window.removeEventListener("focus", onVisible);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [user?.id]);
 
-    const login = (token, loggedInUser) => {
-        // Token lives only in this page's JavaScript memory.
-        // It is intentionally not persisted, so F5/reload requires login again.
+    const login = (token, loggedInUser, initialPermissions = {}) => {
         setAuthToken(token);
         setNotice(null);
         setUser(loggedInUser);
+        setPermissions(initialPermissions || {});
     };
 
     const logout = () => {
         const token = getAuthToken();
-
-        // Leave the app immediately, then close the session on the server so the
-        // token cannot be reused and the user no longer shows as "online".
         endSession(null);
 
         if (token) {
-            logoutRequest(token).catch(() => {
-                // Best effort: the session still expires on its own.
-            });
+            logoutRequest(token).catch(() => {});
         }
     };
 
     const clearNotice = () => setNotice(null);
 
+    /**
+     * Checks if current user is authorized for specific module:action
+     */
+    const hasPermission = useCallback((moduleKey, actionName) => {
+        if (!user) return false;
+        if (user.role === "superadmin") return true;
+        if (!permissions || typeof permissions !== "object") return false;
+        return Boolean(permissions[moduleKey]?.[actionName]);
+    }, [user, permissions]);
+
+    /**
+     * Checks if current user has ANY permission in this module (for tab visibility)
+     */
+    const canAccessModule = useCallback((moduleKey) => {
+        if (!user) return false;
+        if (user.role === "superadmin") return true;
+        if (!permissions || typeof permissions !== "object") return false;
+        const mod = permissions[moduleKey];
+        if (!mod || typeof mod !== "object") return false;
+        return Object.values(mod).some(Boolean);
+    }, [user, permissions]);
+
     return (
-        <AuthContext.Provider value={{ user, loading, notice, clearNotice, login, logout }}>
+        <AuthContext.Provider
+            value={{
+                user,
+                permissions,
+                loading,
+                notice,
+                clearNotice,
+                login,
+                logout,
+                hasPermission,
+                canAccessModule
+            }}
+        >
             {children}
         </AuthContext.Provider>
     );

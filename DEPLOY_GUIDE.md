@@ -38,10 +38,6 @@ This guide explains how to deploy the **Legion Insulator Ultrasonic Testing Dash
    | `DATABASE_URL` | `postgresql://user:pass@host:5432/dbname` | Your PostgreSQL connection string (Supabase) |
    | `DATABASE_SSL` | `true` | Required for cloud databases (Supabase, Neon) |
    | `JWT_SECRET` | `your-secure-random-64-character-jwt-key` | Secret key for JWT signing |
-   | `ADMIN_USERNAME` | `Aman` | Default Administrator username |
-   | `ADMIN_PASSWORD` | `7546854486` | Administrator password |
-   | `SUPERADMIN_USERNAME` | `superadmin` | Super Administrator username |
-   | `SUPERADMIN_PASSWORD` | `SuperAdmin@Legion2026!` | Super Administrator password |
    | `FRONTEND_URL` | `https://your-frontend.vercel.app` | Allowed CORS frontend URL (or `*`) |
    | `MAX_ACTIVE_SESSIONS` | `1` | Max active sessions per user account |
 

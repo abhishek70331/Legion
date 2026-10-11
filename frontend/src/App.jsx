@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback } from "react";
 import { useAuth } from "./AuthContext.jsx";
+import { useToast } from "./ToastContext.jsx";
 import Login from "./Login.jsx";
 import UserManagement from "./UserManagement.jsx";
 
@@ -98,6 +99,64 @@ function getCurrentShift(date = new Date()) {
         return { name: "Shift B", time: "14:00 – 22:00", code: "B", label: "Evening Shift" };
     }
     return { name: "Shift C", time: "22:00 – 06:00", code: "C", label: "Night Shift" };
+}
+
+function formatUid(nextValue, prevValue = "") {
+    if (!nextValue) return "";
+    const raw = nextValue.toUpperCase();
+    const prev = (prevValue || "").toUpperCase();
+
+    // If user backspaced the hyphen (e.g. from 'A-' to 'A', or 'AB-' to 'AB')
+    if (prev.endsWith("-") && prev.length === raw.length + 1 && prev.slice(0, -1) === raw) {
+        return raw.slice(0, -1);
+    }
+
+    let normalized = raw;
+    // If user had 'A-' and typed another letter 'B', input is 'A-B' -> merge to 'AB-'
+    if (/^[A-Z]+-[A-Z]+$/.test(normalized)) {
+        normalized = normalized.replace("-", "") + "-";
+    }
+
+    const match = normalized.match(/^([A-Z]+)(.*)$/);
+    if (match) {
+        const letters = match[1];
+        let rest = match[2];
+        if (rest.startsWith("-")) {
+            rest = rest.replace(/^-+/, "");
+            return `${letters}-${rest}`;
+        } else if (rest.length > 0) {
+            return `${letters}-${rest.replace(/^-+/, "")}`;
+        } else {
+            return `${letters}-`;
+        }
+    }
+    return raw;
+}
+
+function formatLocationReading(nextValue, prevValue = "") {
+    if (!nextValue) return "";
+
+    // Strip any invalid characters (keep only digits and dot)
+    let cleaned = String(nextValue).replace(/[^0-9.]/g, "");
+
+    // Prevent multiple dots
+    const parts = cleaned.split(".");
+    if (parts.length > 2) {
+        cleaned = parts[0] + "." + parts.slice(1).join("");
+    }
+
+    // Handle backspace when prev was 'X.' and user deleted the '.' -> clear field
+    const prevStr = String(prevValue || "");
+    if (prevStr.endsWith(".") && prevStr.length === cleaned.length + 1 && prevStr.slice(0, -1) === cleaned) {
+        return "";
+    }
+
+    // If user typed a single digit without dot: automatically append dot (e.g. '2' -> '2.')
+    if (/^[0-9]$/.test(cleaned)) {
+        return cleaned + ".";
+    }
+
+    return cleaned;
 }
 
 function emptyForm(heading = "", customerName = "") {
@@ -206,10 +265,39 @@ function exportRecordsToCSV(records, filename = "legion_ultrasonic_records.csv")
 }
 
 /* =========================================================
+   ACCESS DENIED COMPONENT
+========================================================= */
+
+function AccessDeniedView({ title = "Access Denied", message = "You do not have the required permissions to access this feature." }) {
+    return (
+        <div className="access-denied-container">
+            <div className="access-denied-card">
+                <div className="access-denied-icon">🔒</div>
+                <span className="access-denied-kicker">ACCESS CONTROL ENFORCED</span>
+                <h2>{title}</h2>
+                <p>{message}</p>
+                <div className="access-denied-meta">
+                    <span>Contact your Super Administrator to request permission assignment.</span>
+                </div>
+            </div>
+        </div>
+    );
+}
+
+/* =========================================================
    RECORDS TABLE COMPONENT
 ========================================================= */
 
-function RecordsTable({ rows, isAdmin = false, onEdit, onDelete, sortField, sortDirection, onSort }) {
+function RecordsTable({
+    rows,
+    canEdit = false,
+    canDelete = false,
+    onEdit,
+    onDelete,
+    sortField,
+    sortDirection,
+    onSort
+}) {
     if (!rows.length) {
         return (
             <div className="empty-state">
@@ -219,6 +307,8 @@ function RecordsTable({ rows, isAdmin = false, onEdit, onDelete, sortField, sort
             </div>
         );
     }
+
+    const showActions = canEdit || canDelete;
 
     return (
         <div className="table-scroll">
@@ -245,7 +335,7 @@ function RecordsTable({ rows, isAdmin = false, onEdit, onDelete, sortField, sort
                                 </th>
                             );
                         })}
-                        {isAdmin && <th className="record-actions-heading">Actions</th>}
+                        {showActions && <th className="record-actions-heading">Actions</th>}
                     </tr>
                 </thead>
                 <tbody>
@@ -256,24 +346,28 @@ function RecordsTable({ rows, isAdmin = false, onEdit, onDelete, sortField, sort
                                     {displayCell(row, col.key)}
                                 </td>
                             ))}
-                            {isAdmin && (
+                            {showActions && (
                                 <td className="record-actions-cell">
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary small-btn"
-                                        onClick={() => onEdit(row)}
-                                        title="Edit this record"
-                                    >
-                                        Edit
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="btn btn-danger small-btn"
-                                        onClick={() => onDelete(row)}
-                                        title="Delete this record"
-                                    >
-                                        Delete
-                                    </button>
+                                    {canEdit && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary small-btn"
+                                            onClick={() => onEdit(row)}
+                                            title="Edit this record"
+                                        >
+                                            Edit
+                                        </button>
+                                    )}
+                                    {canDelete && (
+                                        <button
+                                            type="button"
+                                            className="btn btn-danger small-btn"
+                                            onClick={() => onDelete(row)}
+                                            title="Delete this record"
+                                        >
+                                            Delete
+                                        </button>
+                                    )}
                                 </td>
                             )}
                         </tr>
@@ -289,12 +383,44 @@ function RecordsTable({ rows, isAdmin = false, onEdit, onDelete, sortField, sort
 ========================================================= */
 
 function MainApp() {
-    const { user, logout } = useAuth();
-    const isAdmin = ["admin", "superadmin"].includes(user?.role);
+    const { user, logout, hasPermission } = useAuth();
+    const toast = useToast();
     const isSuperAdmin = user?.role === "superadmin";
 
-    // View Navigation Tabs
-    const [activeTab, setActiveTab] = useState("overview");
+    // Permission flags for UI controls
+    const canViewOverview = isSuperAdmin || hasPermission("overview", "view");
+    const canCreateRecord = isSuperAdmin || hasPermission("records", "create");
+    const canViewRecords = isSuperAdmin || hasPermission("records", "view");
+    const canSearchRecords = isSuperAdmin || hasPermission("records", "search");
+    const canEditRecord = isSuperAdmin || hasPermission("records", "edit");
+    const canDeleteRecord = isSuperAdmin || hasPermission("records", "delete");
+    const canExportRecords = isSuperAdmin || hasPermission("records", "export");
+    const canViewShifts = isSuperAdmin || hasPermission("shift_analytics", "view");
+    const canAccessAdmin = isSuperAdmin ||
+        hasPermission("user_management", "view") ||
+        hasPermission("permission_management", "view") ||
+        hasPermission("audit_logs", "view");
+
+    // Dynamic initial active tab based on allowed modules
+    const defaultTab = useMemo(() => {
+        if (canViewOverview) return "overview";
+        if (canCreateRecord) return "entry";
+        if (canViewRecords || canSearchRecords) return "records";
+        if (canViewShifts) return "shifts";
+        if (canAccessAdmin) return "users";
+        return "denied";
+    }, [canViewOverview, canCreateRecord, canViewRecords, canSearchRecords, canViewShifts, canAccessAdmin]);
+
+    const [activeTab, setActiveTab] = useState(defaultTab);
+
+    // Keep activeTab aligned if permissions change
+    useEffect(() => {
+        if (activeTab === "overview" && !canViewOverview) setActiveTab(defaultTab);
+        if (activeTab === "entry" && !canCreateRecord) setActiveTab(defaultTab);
+        if (activeTab === "records" && (!canViewRecords && !canSearchRecords)) setActiveTab(defaultTab);
+        if (activeTab === "shifts" && !canViewShifts) setActiveTab(defaultTab);
+        if (activeTab === "users" && !canAccessAdmin) setActiveTab(defaultTab);
+    }, [activeTab, canViewOverview, canCreateRecord, canViewRecords, canSearchRecords, canViewShifts, canAccessAdmin, defaultTab]);
 
     // Real-time clock & shift
     const [clock, setClock] = useState(() => new Date());
@@ -348,6 +474,7 @@ function MainApp() {
         if (hour < 6) base.setDate(base.getDate() - 1);
         return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, "0")}-${String(base.getDate()).padStart(2, "0")}`;
     });
+
     const [dateSummary, setDateSummary] = useState(null);
     const [dateSummaryLoading, setDateSummaryLoading] = useState(false);
     const [dateSummaryMessage, setDateSummaryMessage] = useState({ type: "", text: "" });
@@ -367,6 +494,7 @@ function MainApp() {
 
     // Load records
     const loadAllRecords = useCallback(async (limit = recordLimit) => {
+        if (!canViewRecords && !canSearchRecords) return;
         setLoadingAll(true);
         setAllMessage({ type: "", text: "" });
         try {
@@ -385,10 +513,11 @@ function MainApp() {
         } finally {
             setLoadingAll(false);
         }
-    }, [recordLimit]);
+    }, [recordLimit, canViewRecords, canSearchRecords]);
 
     // Load 7-day summary
     const loadLast7Days = useCallback(async () => {
+        if (!canViewShifts && !canViewOverview) return;
         setLoadingLast7Days(true);
         setLast7DaysMessage({ type: "", text: "" });
         try {
@@ -403,10 +532,10 @@ function MainApp() {
         } finally {
             setLoadingLast7Days(false);
         }
-    }, []);
+    }, [canViewShifts, canViewOverview]);
 
     const loadDateSummary = async () => {
-        if (!selectedSummaryDate) return;
+        if (!selectedSummaryDate || !canViewShifts) return;
         setDateSummaryLoading(true);
         setDateSummaryMessage({ type: "", text: "" });
         try {
@@ -428,7 +557,6 @@ function MainApp() {
         const interval = setInterval(() => {
             const now = new Date();
             setClock(now);
-            // Keep date/time current in unsubmitted form
             setForm((prev) => ({
                 ...prev,
                 record_date: getCurrentDate(),
@@ -455,7 +583,15 @@ function MainApp() {
 
     // Form handlers
     const handleFormChange = (key, value) => {
-        setForm((prev) => ({ ...prev, [key]: value }));
+        setForm((prev) => {
+            let nextValue = value;
+            if (key === "uid") {
+                nextValue = formatUid(value, prev.uid);
+            } else if (LOC_KEYS.includes(key)) {
+                nextValue = formatLocationReading(value, prev[key]);
+            }
+            return { ...prev, [key]: nextValue };
+        });
         setSaveMessage({ type: "", text: "" });
     };
 
@@ -473,6 +609,12 @@ function MainApp() {
     };
 
     const handleSave = async () => {
+        if (!canCreateRecord) {
+            setSaveMessage({ type: "error", text: "You do not have permission to add new inspection records." });
+            toast.error("Permission Denied", "You do not have permission to add new inspection records.");
+            return;
+        }
+
         const heading = form.heading.trim();
         const customerName = form.customer_name.trim();
         const uid = form.uid.trim();
@@ -484,6 +626,7 @@ function MainApp() {
                 type: "error",
                 text: "Heading, Customer Name, and UID are mandatory."
             });
+            toast.error("Validation Failed", "Heading, Customer Name, and UID are mandatory to log an inspection.");
             return;
         }
 
@@ -505,49 +648,36 @@ function MainApp() {
 
             const createResponse = await createRecord(payload);
 
-            // Immediate verification check
-            const verificationRows = await searchRecords({
-                heading,
-                customer_name: customerName,
-                uid,
-                record_date: recordDate
-            });
-
-            const normalizedHeading = String(heading).trim().toUpperCase();
-            const normalizedCustomer = String(customerName).trim().toUpperCase();
-            const normalizedUid = String(uid).trim().toUpperCase();
-
-            const savedRow = verificationRows.find((row) =>
-                String(row.heading || "").trim().toUpperCase() === normalizedHeading &&
-                String(row.customer_name || "").trim().toUpperCase() === normalizedCustomer &&
-                String(row.uid || "").trim().toUpperCase() === normalizedUid &&
-                String(row.record_date || "").slice(0, 10) === String(recordDate).slice(0, 10)
-            );
-
-            if (!createResponse?.data || !savedRow) {
-                throw new Error("Record could not be verified in the database. Please try again.");
+            if (!createResponse?.data) {
+                throw new Error("Record could not be saved to the database. Please try again.");
             }
 
             setSaveMessage({
                 type: "success",
-                text: `Inspection for ${customerName} (UID: ${uid}) verified and saved successfully.`
+                text: `Inspection for ${customerName} (UID: ${uid}) saved successfully.`
             });
 
-            // Keep heading and customer name for rapid next entry, clear UID and readings
+            toast.success(
+                "Data Saved Successfully",
+                `Workpiece test for ${customerName} (UID: ${uid}) recorded into database.`,
+                currentShift.name
+            );
+
             setForm((prev) => ({
                 ...emptyForm(heading, customerName),
                 record_date: getCurrentDate(),
                 record_time: getCurrentTime()
             }));
 
-            // Refresh recent lists and shift summaries
             await loadAllRecords();
             await loadLast7Days();
         } catch (error) {
+            const errText = getErrorMessage(error, "Failed to save record.");
             setSaveMessage({
                 type: "error",
-                text: getErrorMessage(error, "Failed to save record.")
+                text: errText
             });
+            toast.error("Error Saving Data", errText);
         } finally {
             setSaving(false);
         }
@@ -555,6 +685,7 @@ function MainApp() {
 
     // Edit record handlers
     const openEditor = (row) => {
+        if (!canEditRecord) return;
         setEditingRecord({
             ...row,
             _original_heading: row.heading,
@@ -568,7 +699,7 @@ function MainApp() {
 
     const handleUpdateRecord = async (e) => {
         e.preventDefault();
-        if (!editingRecord) return;
+        if (!editingRecord || !canEditRecord) return;
 
         setEditSaving(true);
         setEditMessage({ type: "", text: "" });
@@ -588,10 +719,13 @@ function MainApp() {
 
             setEditingRecord(null);
             setAllMessage({ type: "success", text: "Record updated successfully." });
+            toast.success("Record Updated Successfully", `Changes to workpiece UID: ${editingRecord.uid} have been saved.`);
             await loadAllRecords();
             await loadLast7Days();
         } catch (error) {
-            setEditMessage({ type: "error", text: getErrorMessage(error, "Failed to update record.") });
+            const errText = getErrorMessage(error, "Failed to update record.");
+            setEditMessage({ type: "error", text: errText });
+            toast.error("Error Updating Record", errText);
         } finally {
             setEditSaving(false);
         }
@@ -599,11 +733,12 @@ function MainApp() {
 
     // Delete record modal handlers
     const openDeleteModal = (row) => {
+        if (!canDeleteRecord) return;
         setDeleteModalRecord(row);
     };
 
     const handleDeleteConfirm = async () => {
-        if (!deleteModalRecord || !isAdmin) return;
+        if (!deleteModalRecord || !canDeleteRecord) return;
         setDeleteSubmitting(true);
         try {
             await deleteRecord({
@@ -612,11 +747,14 @@ function MainApp() {
                 uid: deleteModalRecord.uid
             });
             setAllMessage({ type: "success", text: `Record ${deleteModalRecord.uid} deleted successfully.` });
+            toast.success("Record Deleted", `Inspection record for UID ${deleteModalRecord.uid} was permanently removed.`);
             setDeleteModalRecord(null);
             await loadAllRecords();
             await loadLast7Days();
         } catch (error) {
-            setAllMessage({ type: "error", text: getErrorMessage(error, "Failed to delete record.") });
+            const errText = getErrorMessage(error, "Failed to delete record.");
+            setAllMessage({ type: "error", text: errText });
+            toast.error("Deletion Failed", errText);
         } finally {
             setDeleteSubmitting(false);
         }
@@ -625,6 +763,8 @@ function MainApp() {
     // Search handlers
     const handleSearch = async (e) => {
         e.preventDefault();
+        if (!canSearchRecords && !canViewRecords) return;
+
         const heading = searchHeading.trim();
         const customerName = searchCustomer.trim();
         const uid = searchUid.trim();
@@ -699,7 +839,7 @@ function MainApp() {
         });
     };
 
-    // Derived options & stats
+    // Derived values
     const headingOptions = useMemo(() => uniqueValues(allRecords, "heading"), [allRecords]);
     const customerOptions = useMemo(() => uniqueValues(allRecords, "customer_name"), [allRecords]);
     const liveStats = useMemo(() => calculateReadingStats(form), [form]);
@@ -722,7 +862,7 @@ function MainApp() {
     }, [last7Days]);
 
     const todaySummary = last7Days[0];
-    const roleTitle = isSuperAdmin ? "Super Admin" : isAdmin ? "Admin" : "Operator";
+    const roleTitle = isSuperAdmin ? "Super Admin" : user?.role === "admin" ? "Administrator" : "Operator";
 
     const formattedClock = clock.toLocaleTimeString("en-IN", {
         hour: "2-digit",
@@ -740,9 +880,7 @@ function MainApp() {
 
     return (
         <div className="app">
-            {/* =================================================
-                GLOBAL TOP HEADER
-            ================================================= */}
+            {/* GLOBAL TOP HEADER */}
             <header className="company-header">
                 <div className="header-row">
                     <div className="header-brand-group">
@@ -753,19 +891,17 @@ function MainApp() {
                         </div>
                         <div>
                             <h1 className="header-title">LEGION SYSTEM</h1>
-                            <span className="header-title-sub">Insulator Ultrasonic Testing Data Suite</span>
+                            <span className="header-title-sub">Insulator Ultrasonic Testing Suite</span>
                         </div>
                     </div>
 
                     <div className="header-center-info">
-                        {/* Live Shift Pill */}
                         <div className={`shift-pill-badge shift-${currentShift.code.toLowerCase()}`}>
                             <span className="shift-indicator-dot" />
                             <span className="shift-name">{currentShift.name}</span>
                             <span className="shift-time">{currentShift.time}</span>
                         </div>
 
-                        {/* Connection Health */}
                         <div
                             className={`health-pill ${backendStatus.online ? "health-online" : "health-offline"}`}
                             title={`Backend API: ${API_URL}`}
@@ -796,56 +932,62 @@ function MainApp() {
                     </div>
                 </div>
 
-                {/* =================================================
-                    PRIMARY NAVIGATION TABS
-                ================================================= */}
+                {/* PRIMARY NAVIGATION TABS (PERMISSION-FILTERED) */}
                 <nav className="tab-navigation">
                     <div className="tab-navigation-inner">
-                        <button
-                            type="button"
-                            className={`nav-tab ${activeTab === "overview" ? "active" : ""}`}
-                            onClick={() => setActiveTab("overview")}
-                        >
-                            <span className="nav-tab-icon">📊</span>
-                            <span>Overview & Shift KPI</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            className={`nav-tab ${activeTab === "entry" ? "active" : ""}`}
-                            onClick={() => setActiveTab("entry")}
-                        >
-                            <span className="nav-tab-icon">➕</span>
-                            <span>New Inspection</span>
-                        </button>
-
-                        <button
-                            type="button"
-                            className={`nav-tab ${activeTab === "records" ? "active" : ""}`}
-                            onClick={() => setActiveTab("records")}
-                        >
-                            <span className="nav-tab-icon">📋</span>
-                            <span>Records Explorer</span>
-                            {allRecords.length > 0 && <span className="tab-count-badge">{allRecords.length}</span>}
-                        </button>
-
-                        <button
-                            type="button"
-                            className={`nav-tab ${activeTab === "shifts" ? "active" : ""}`}
-                            onClick={() => setActiveTab("shifts")}
-                        >
-                            <span className="nav-tab-icon">📈</span>
-                            <span>Shift Analytics</span>
-                        </button>
-
-                        {isSuperAdmin && (
+                        {canViewOverview && (
                             <button
                                 type="button"
-                                className={`nav-tab ${activeTab === "users" ? "active" : ""}`}
+                                className={`nav-tab ${activeTab === "overview" ? "active" : ""}`}
+                                onClick={() => setActiveTab("overview")}
+                            >
+                                <span className="nav-tab-icon">📊</span>
+                                <span>Overview & Shift KPI</span>
+                            </button>
+                        )}
+
+                        {canCreateRecord && (
+                            <button
+                                type="button"
+                                className={`nav-tab ${activeTab === "entry" ? "active" : ""}`}
+                                onClick={() => setActiveTab("entry")}
+                            >
+                                <span className="nav-tab-icon">➕</span>
+                                <span>New Inspection</span>
+                            </button>
+                        )}
+
+                        {(canViewRecords || canSearchRecords) && (
+                            <button
+                                type="button"
+                                className={`nav-tab ${activeTab === "records" ? "active" : ""}`}
+                                onClick={() => setActiveTab("records")}
+                            >
+                                <span className="nav-tab-icon">📋</span>
+                                <span>Records Explorer</span>
+                                {allRecords.length > 0 && <span className="tab-count-badge">{allRecords.length}</span>}
+                            </button>
+                        )}
+
+                        {canViewShifts && (
+                            <button
+                                type="button"
+                                className={`nav-tab ${activeTab === "shifts" ? "active" : ""}`}
+                                onClick={() => setActiveTab("shifts")}
+                            >
+                                <span className="nav-tab-icon">📈</span>
+                                <span>Shift Analytics</span>
+                            </button>
+                        )}
+
+                        {canAccessAdmin && (
+                            <button
+                                type="button"
+                                className={`nav-tab nav-tab-admin ${activeTab === "users" ? "active" : ""}`}
                                 onClick={() => setActiveTab("users")}
                             >
-                                <span className="nav-tab-icon">👥</span>
-                                <span>User Management</span>
+                                <span className="nav-tab-icon">🛡️</span>
+                                <span>Administration</span>
                             </button>
                         )}
                     </div>
@@ -853,718 +995,755 @@ function MainApp() {
             </header>
 
             <main className="content">
+                {/* FALLBACK: ACCESS DENIED IF NO MODULE PERMITTED */}
+                {activeTab === "denied" && (
+                    <AccessDeniedView
+                        title="No Modules Assigned"
+                        message="Your account has been authenticated, but an administrator has not yet assigned operational feature permissions. Please contact your administrator."
+                    />
+                )}
+
                 {/* =================================================
                     TAB 1: OVERVIEW & SHIFT KPI
                 ================================================= */}
                 {activeTab === "overview" && (
-                    <div className="tab-pane active-pane">
-                        <section className="dashboard-hero">
-                            <div className="dashboard-hero-copy">
-                                <span className="hero-overline">OPERATIONAL STATUS</span>
-                                <h2>Insulator Ultrasonic Testing Center</h2>
-                                <p>Live monitoring of active shift inspections, daily test volumes, and workstation records.</p>
-                            </div>
-                            <div className="hero-quick-actions">
-                                <button type="button" className="btn btn-primary" onClick={() => setActiveTab("entry")}>
-                                    ➕ New Inspection Entry
-                                </button>
-                                <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("records")}>
-                                    🔍 Search Records
-                                </button>
-                            </div>
-                        </section>
-
-                        {/* KPI GRID */}
-                        <section className="kpi-grid">
-                            <article className="kpi-card kpi-highlight">
-                                <div className="kpi-header">
-                                    <span>Current Shift</span>
-                                    <span className="kpi-badge shift-tag">{currentShift.name}</span>
+                    canViewOverview ? (
+                        <div className="tab-pane active-pane">
+                            <section className="dashboard-hero">
+                                <div className="dashboard-hero-copy">
+                                    <span className="hero-overline">OPERATIONAL STATUS</span>
+                                    <h2>Insulator Ultrasonic Testing Center</h2>
+                                    <p>Live monitoring of active shift inspections, daily test volumes, and workstation records.</p>
                                 </div>
-                                <strong className="kpi-value">{currentShift.label}</strong>
-                                <small className="kpi-sub">{currentShift.time} window</small>
-                            </article>
-
-                            <article className="kpi-card">
-                                <div className="kpi-header">
-                                    <span>Today Total Inspections</span>
-                                    <span className="kpi-badge">Today</span>
+                                <div className="hero-quick-actions">
+                                    {canCreateRecord && (
+                                        <button type="button" className="btn btn-primary" onClick={() => setActiveTab("entry")}>
+                                            ➕ New Inspection Entry
+                                        </button>
+                                    )}
+                                    {(canViewRecords || canSearchRecords) && (
+                                        <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("records")}>
+                                            🔍 Search Records
+                                        </button>
+                                    )}
                                 </div>
-                                <strong className="kpi-value">{todaySummary ? todaySummary.data_count : "0"}</strong>
-                                <small className="kpi-sub">
-                                    A: {todaySummary?.a_shift_count ?? 0} | B: {todaySummary?.b_shift_count ?? 0} | C: {todaySummary?.c_shift_count ?? 0}
-                                </small>
-                            </article>
+                            </section>
 
-                            <article className="kpi-card">
-                                <div className="kpi-header">
-                                    <span>7-Day Total</span>
-                                    <span className="kpi-badge">Cumulative</span>
-                                </div>
-                                <strong className="kpi-value">{loadingLast7Days ? "…" : weekTotal}</strong>
-                                <small className="kpi-sub">Tests recorded across past week</small>
-                            </article>
+                            {/* KPI GRID */}
+                            <section className="kpi-grid">
+                                <article className="kpi-card kpi-highlight">
+                                    <div className="kpi-header">
+                                        <span>Current Shift</span>
+                                        <span className="kpi-badge shift-tag">{currentShift.name}</span>
+                                    </div>
+                                    <strong className="kpi-value">{currentShift.label}</strong>
+                                    <small className="kpi-sub">{currentShift.time} window</small>
+                                </article>
 
-                            <article className="kpi-card">
-                                <div className="kpi-header">
-                                    <span>Workspace Operator</span>
-                                    <span className="kpi-badge role-tag">{roleTitle}</span>
-                                </div>
-                                <strong className="kpi-value">{user?.username}</strong>
-                                <small className="kpi-sub">Session secure · Single login active</small>
-                            </article>
-                        </section>
+                                <article className="kpi-card">
+                                    <div className="kpi-header">
+                                        <span>Today Total Inspections</span>
+                                        <span className="kpi-badge">Today</span>
+                                    </div>
+                                    <strong className="kpi-value">{todaySummary ? todaySummary.data_count : "0"}</strong>
+                                    <small className="kpi-sub">
+                                        A: {todaySummary?.a_shift_count ?? 0} | B: {todaySummary?.b_shift_count ?? 0} | C: {todaySummary?.c_shift_count ?? 0}
+                                    </small>
+                                </article>
 
-                        {/* SHIFT DISTRIBUTION PROGRESS BAR */}
-                        <section className="panel shift-progress-panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">7-DAY SHIFT COMPOSITION</span>
-                                    <h3>Shift Production Volume Breakdown</h3>
-                                </div>
-                                <span className="shift-total-summary">Total: <strong>{weekTotal}</strong> records</span>
-                            </div>
+                                <article className="kpi-card">
+                                    <div className="kpi-header">
+                                        <span>7-Day Total</span>
+                                        <span className="kpi-badge">Cumulative</span>
+                                    </div>
+                                    <strong className="kpi-value">{loadingLast7Days ? "…" : weekTotal}</strong>
+                                    <small className="kpi-sub">Tests recorded across past week</small>
+                                </article>
 
-                            <div className="shift-stacked-bar" title="Shift breakdown over last 7 days">
-                                <div
-                                    className="bar-segment bar-shift-a"
-                                    style={{ width: `${weekTotal ? (shiftTotals.a / weekTotal) * 100 : 33.3}%` }}
-                                >
-                                    {shiftTotals.a > 0 && <span>A ({shiftTotals.a})</span>}
-                                </div>
-                                <div
-                                    className="bar-segment bar-shift-b"
-                                    style={{ width: `${weekTotal ? (shiftTotals.b / weekTotal) * 100 : 33.3}%` }}
-                                >
-                                    {shiftTotals.b > 0 && <span>B ({shiftTotals.b})</span>}
-                                </div>
-                                <div
-                                    className="bar-segment bar-shift-c"
-                                    style={{ width: `${weekTotal ? (shiftTotals.c / weekTotal) * 100 : 33.3}%` }}
-                                >
-                                    {shiftTotals.c > 0 && <span>C ({shiftTotals.c})</span>}
-                                </div>
-                            </div>
+                                <article className="kpi-card">
+                                    <div className="kpi-header">
+                                        <span>Workspace Operator</span>
+                                        <span className="kpi-badge role-tag">{roleTitle}</span>
+                                    </div>
+                                    <strong className="kpi-value">{user?.username}</strong>
+                                    <small className="kpi-sub">
+                                        {isSuperAdmin ? "Super Admin Access" : "Granular Assigned Permissions"}
+                                    </small>
+                                </article>
+                            </section>
 
-                            <div className="shift-legend">
-                                <div className="legend-item"><span className="legend-color legend-a" /> <span>Shift A (06:00 - 14:00): <strong>{shiftTotals.a}</strong></span></div>
-                                <div className="legend-item"><span className="legend-color legend-b" /> <span>Shift B (14:00 - 22:00): <strong>{shiftTotals.b}</strong></span></div>
-                                <div className="legend-item"><span className="legend-color legend-c" /> <span>Shift C (22:00 - 06:00): <strong>{shiftTotals.c}</strong></span></div>
-                            </div>
-                        </section>
-
-                        {/* RECENT 5 ACTIVITY PREVIEW */}
-                        <section className="panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">LATEST ACTIVITY</span>
-                                    <h2>Recently Logged Inspections</h2>
-                                    <p className="section-subtitle">Real-time feed of recent test records stored in the database.</p>
+                            {/* SHIFT DISTRIBUTION PROGRESS BAR */}
+                            <section className="panel shift-progress-panel">
+                                <div className="section-heading-row">
+                                    <div>
+                                        <span className="section-kicker">7-DAY SHIFT COMPOSITION</span>
+                                        <h3>Shift Production Volume Breakdown</h3>
+                                    </div>
+                                    <span className="shift-total-summary">Total: <strong>{weekTotal}</strong> records</span>
                                 </div>
-                                <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("records")}>
-                                    View All Records ({allRecords.length}) →
-                                </button>
-                            </div>
 
-                            <RecordsTable
-                                rows={sortRows(allRecords.slice(0, 5))}
-                                isAdmin={isAdmin}
-                                onEdit={openEditor}
-                                onDelete={openDeleteModal}
-                                sortField={sortField}
-                                sortDirection={sortDirection}
-                                onSort={handleSort}
-                            />
-                        </section>
-                    </div>
+                                <div className="shift-stacked-bar" title="Shift breakdown over last 7 days">
+                                    <div
+                                        className="bar-segment bar-shift-a"
+                                        style={{ width: `${weekTotal ? (shiftTotals.a / weekTotal) * 100 : 33.3}%` }}
+                                    >
+                                        {shiftTotals.a > 0 && <span>A ({shiftTotals.a})</span>}
+                                    </div>
+                                    <div
+                                        className="bar-segment bar-shift-b"
+                                        style={{ width: `${weekTotal ? (shiftTotals.b / weekTotal) * 100 : 33.3}%` }}
+                                    >
+                                        {shiftTotals.b > 0 && <span>B ({shiftTotals.b})</span>}
+                                    </div>
+                                    <div
+                                        className="bar-segment bar-shift-c"
+                                        style={{ width: `${weekTotal ? (shiftTotals.c / weekTotal) * 100 : 33.3}%` }}
+                                    >
+                                        {shiftTotals.c > 0 && <span>C ({shiftTotals.c})</span>}
+                                    </div>
+                                </div>
+
+                                <div className="shift-legend">
+                                    <div className="legend-item"><span className="legend-color legend-a" /> <span>Shift A (06:00 - 14:00): <strong>{shiftTotals.a}</strong></span></div>
+                                    <div className="legend-item"><span className="legend-color legend-b" /> <span>Shift B (14:00 - 22:00): <strong>{shiftTotals.b}</strong></span></div>
+                                    <div className="legend-item"><span className="legend-color legend-c" /> <span>Shift C (22:00 - 06:00): <strong>{shiftTotals.c}</strong></span></div>
+                                </div>
+                            </section>
+
+                            {/* RECENT ACTIVITY PREVIEW */}
+                            {(canViewRecords || canSearchRecords) && (
+                                <section className="panel">
+                                    <div className="section-heading-row">
+                                        <div>
+                                            <span className="section-kicker">LATEST ACTIVITY</span>
+                                            <h2>Recently Logged Inspections</h2>
+                                            <p className="section-subtitle">Real-time feed of recent test records stored in the database.</p>
+                                        </div>
+                                        <button type="button" className="btn btn-secondary" onClick={() => setActiveTab("records")}>
+                                            View All Records ({allRecords.length}) →
+                                        </button>
+                                    </div>
+
+                                    <RecordsTable
+                                        rows={sortRows(allRecords.slice(0, 5))}
+                                        canEdit={canEditRecord}
+                                        canDelete={canDeleteRecord}
+                                        onEdit={openEditor}
+                                        onDelete={openDeleteModal}
+                                        sortField={sortField}
+                                        sortDirection={sortDirection}
+                                        onSort={handleSort}
+                                    />
+                                </section>
+                            )}
+                        </div>
+                    ) : (
+                        <AccessDeniedView title="Overview Restricted" message="You do not have permission to view the Overview dashboard." />
+                    )
                 )}
 
                 {/* =================================================
                     TAB 2: NEW INSPECTION (DATA ENTRY)
                 ================================================= */}
                 {activeTab === "entry" && (
-                    <div className="tab-pane active-pane">
-                        <section className="panel entry-panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">WORKSTATION DATA CAPTURE</span>
-                                    <h2>Record New Ultrasonic Test</h2>
-                                    <p className="section-subtitle">
-                                        Date & Time are stamped automatically. Enter reading values for points Loc-1 through Loc-12.
-                                    </p>
-                                </div>
-                                <div className="entry-status-badges">
-                                    <span className="entry-shift-badge">Logging to: <strong>{currentShift.name}</strong></span>
-                                </div>
-                            </div>
-
-                            {/* AUTO-COMPLETION DATALISTS */}
-                            <datalist id="heading-options">
-                                {headingOptions.map((opt) => (
-                                    <option key={opt} value={opt} />
-                                ))}
-                            </datalist>
-
-                            <datalist id="customer-options">
-                                {customerOptions.map((opt) => (
-                                    <option key={opt} value={opt} />
-                                ))}
-                            </datalist>
-
-                            <div className="record-form">
-                                {/* SECTION: RECORD IDENTIFIERS */}
-                                <div className="form-subpanel metadata-subpanel">
-                                    <div className="subpanel-header">
-                                        <span className="subpanel-number">1</span>
-                                        <div>
-                                            <h4>Inspection Identifiers</h4>
-                                            <p>Specify workpiece, customer, and UID reference.</p>
-                                        </div>
+                    canCreateRecord ? (
+                        <div className="tab-pane active-pane">
+                            <section className="panel entry-panel">
+                                <div className="section-heading-row">
+                                    <div>
+                                        <span className="section-kicker">WORKSTATION DATA CAPTURE</span>
+                                        <h2>Record New Ultrasonic Test</h2>
+                                        <p className="section-subtitle">
+                                            Date & Time are stamped automatically. Enter reading values for points Loc-1 through Loc-12.
+                                        </p>
                                     </div>
-
-                                    <div className="field-grid field-grid-main">
-                                        <label className="field">
-                                            <span className="field-label-req">Heading / Category *</span>
-                                            <input
-                                                type="text"
-                                                list="heading-options"
-                                                value={form.heading}
-                                                onChange={(e) => handleFormChange("heading", e.target.value)}
-                                                placeholder="e.g. 66KV Post Insulator"
-                                                required
-                                            />
-                                        </label>
-
-                                        <label className="field">
-                                            <span className="field-label-req">Customer Name *</span>
-                                            <input
-                                                type="text"
-                                                list="customer-options"
-                                                value={form.customer_name}
-                                                onChange={(e) => handleFormChange("customer_name", e.target.value)}
-                                                placeholder="e.g. PowerGrid Corp"
-                                                required
-                                            />
-                                        </label>
-
-                                        <label className="field">
-                                            <span className="field-label-req">UID Number *</span>
-                                            <input
-                                                type="text"
-                                                value={form.uid}
-                                                onChange={(e) => handleFormChange("uid", e.target.value)}
-                                                placeholder="e.g. UID-98214"
-                                                required
-                                            />
-                                        </label>
-
-                                        <label className="field">
-                                            <span>Inspection Date (Auto)</span>
-                                            <input
-                                                type="date"
-                                                value={form.record_date}
-                                                readOnly
-                                                className="readonly-input"
-                                            />
-                                        </label>
-
-                                        <label className="field">
-                                            <span>Timestamp (Auto)</span>
-                                            <input
-                                                type="time"
-                                                value={form.record_time.slice(0, 5)}
-                                                readOnly
-                                                className="readonly-input"
-                                            />
-                                        </label>
+                                    <div className="entry-status-badges">
+                                        <span className="entry-shift-badge">Logging to: <strong>{currentShift.name}</strong></span>
                                     </div>
                                 </div>
 
-                                {/* SECTION: 12 ULTRASONIC TEST READINGS */}
-                                <div className="form-subpanel readings-subpanel">
-                                    <div className="subpanel-header subpanel-header-readings">
-                                        <div className="subpanel-header-left">
-                                            <span className="subpanel-number">2</span>
+                                <datalist id="heading-options">
+                                    {headingOptions.map((opt) => (
+                                        <option key={opt} value={opt} />
+                                    ))}
+                                </datalist>
+
+                                <datalist id="customer-options">
+                                    {customerOptions.map((opt) => (
+                                        <option key={opt} value={opt} />
+                                    ))}
+                                </datalist>
+
+                                <div className="record-form">
+                                    <div className="form-subpanel metadata-subpanel">
+                                        <div className="subpanel-header">
+                                            <span className="subpanel-number">1</span>
                                             <div>
-                                                <h4>Ultrasonic Location Readings</h4>
-                                                <p>Enter thickness / attenuation values (Loc-1 to Loc-12).</p>
+                                                <h4>Inspection Identifiers</h4>
+                                                <p>Specify workpiece, customer, and UID reference.</p>
                                             </div>
                                         </div>
 
-                                        {/* LIVE SENSOR METRICS */}
-                                        <div className="live-metrics-banner">
-                                            <div className="metric-chip">
-                                                <span>Points:</span>
-                                                <strong>{liveStats.count} / 12</strong>
-                                            </div>
-                                            <div className="metric-chip">
-                                                <span>Min:</span>
-                                                <strong>{liveStats.min}</strong>
-                                            </div>
-                                            <div className="metric-chip">
-                                                <span>Max:</span>
-                                                <strong>{liveStats.max}</strong>
-                                            </div>
-                                            <div className="metric-chip">
-                                                <span>Average:</span>
-                                                <strong>{liveStats.avg}</strong>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <div className="field-grid field-grid-loc">
-                                        {COLUMNS.filter((col) => LOC_KEYS.includes(col.key)).map((col, idx) => (
-                                            <label className="field loc-field" key={col.key}>
-                                                <span className="loc-label-badge">
-                                                    <span>{col.label}</span>
-                                                    <span className="loc-index">#{idx + 1}</span>
-                                                </span>
+                                        <div className="field-grid field-grid-main">
+                                            <label className="field">
+                                                <span className="field-label-req">Heading / Category *</span>
                                                 <input
-                                                    type="number"
-                                                    step="any"
-                                                    inputMode="decimal"
-                                                    value={form[col.key] ?? ""}
-                                                    onChange={(e) => handleFormChange(col.key, e.target.value)}
-                                                    placeholder="0.00"
+                                                    type="text"
+                                                    list="heading-options"
+                                                    value={form.heading}
+                                                    onChange={(e) => handleFormChange("heading", e.target.value)}
+                                                    placeholder="e.g. 66KV Post Insulator"
+                                                    required
                                                 />
                                             </label>
-                                        ))}
+
+                                            <label className="field">
+                                                <span className="field-label-req">Customer Name *</span>
+                                                <input
+                                                    type="text"
+                                                    list="customer-options"
+                                                    value={form.customer_name}
+                                                    onChange={(e) => handleFormChange("customer_name", e.target.value)}
+                                                    placeholder="e.g. PowerGrid Corp"
+                                                    required
+                                                />
+                                            </label>
+
+                                            <label className="field">
+                                                <span className="field-label-req">UID Number *</span>
+                                                <input
+                                                    type="text"
+                                                    value={form.uid}
+                                                    onChange={(e) => handleFormChange("uid", e.target.value)}
+                                                    placeholder="e.g. A-101"
+                                                    required
+                                                />
+                                            </label>
+
+                                            <label className="field">
+                                                <span>Inspection Date (Auto)</span>
+                                                <input
+                                                    type="date"
+                                                    value={form.record_date}
+                                                    readOnly
+                                                    className="readonly-input"
+                                                />
+                                            </label>
+
+                                            <label className="field">
+                                                <span>Timestamp (Auto)</span>
+                                                <input
+                                                    type="time"
+                                                    value={form.record_time.slice(0, 5)}
+                                                    readOnly
+                                                    className="readonly-input"
+                                                />
+                                            </label>
+                                        </div>
+                                    </div>
+
+                                    <div className="form-subpanel readings-subpanel">
+                                        <div className="subpanel-header subpanel-header-readings">
+                                            <div className="subpanel-header-left">
+                                                <span className="subpanel-number">2</span>
+                                                <div>
+                                                    <h4>Ultrasonic Location Readings</h4>
+                                                    <p>Enter thickness / attenuation values (Loc-1 to Loc-12).</p>
+                                                </div>
+                                            </div>
+
+                                            <div className="live-metrics-banner">
+                                                <div className="metric-chip">
+                                                    <span>Points:</span>
+                                                    <strong>{liveStats.count} / 12</strong>
+                                                </div>
+                                                <div className="metric-chip">
+                                                    <span>Min:</span>
+                                                    <strong>{liveStats.min}</strong>
+                                                </div>
+                                                <div className="metric-chip">
+                                                    <span>Max:</span>
+                                                    <strong>{liveStats.max}</strong>
+                                                </div>
+                                                <div className="metric-chip">
+                                                    <span>Average:</span>
+                                                    <strong>{liveStats.avg}</strong>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="field-grid field-grid-loc">
+                                            {COLUMNS.filter((col) => LOC_KEYS.includes(col.key)).map((col, idx) => (
+                                                <label className="field loc-field" key={col.key}>
+                                                    <span className="loc-label-badge">
+                                                        <span>{col.label}</span>
+                                                        <span className="loc-index">#{idx + 1}</span>
+                                                    </span>
+                                                    <input
+                                                        type="text"
+                                                        inputMode="decimal"
+                                                        value={form[col.key] ?? ""}
+                                                        onChange={(e) => handleFormChange(col.key, e.target.value)}
+                                                        placeholder="0.00"
+                                                    />
+                                                </label>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
 
-                            {/* FEEDBACK ALERT */}
-                            {saveMessage.text && (
-                                <div className={`form-feedback-alert alert-${saveMessage.type}`}>
-                                    <span className="feedback-icon">{saveMessage.type === "success" ? "✓" : "!"}</span>
-                                    <span>{saveMessage.text}</span>
-                                </div>
-                            )}
+                                {saveMessage.text && (
+                                    <div className={`form-feedback-alert alert-${saveMessage.type}`}>
+                                        <span className="feedback-icon">{saveMessage.type === "success" ? "✓" : "!"}</span>
+                                        <span>{saveMessage.text}</span>
+                                    </div>
+                                )}
 
-                            {/* ACTION BUTTONS */}
-                            <div className="form-action-bar">
-                                <div className="action-buttons-left">
+                                <div className="form-action-bar">
+                                    <div className="action-buttons-left">
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={handleClearReadings}
+                                            title="Clear all 12 location inputs"
+                                        >
+                                            Clear Readings
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={handleResetForm}
+                                            title="Reset form"
+                                        >
+                                            Reset Form
+                                        </button>
+                                    </div>
+
                                     <button
                                         type="button"
-                                        className="btn btn-secondary"
-                                        onClick={handleClearReadings}
-                                        title="Clear all 12 location inputs"
+                                        className="btn btn-primary btn-save-record"
+                                        onClick={handleSave}
+                                        disabled={saving}
                                     >
-                                        Clear Readings
-                                    </button>
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={handleResetForm}
-                                        title="Reset the entire form"
-                                    >
-                                        Reset Form
+                                        {saving ? (
+                                            <>
+                                                <span className="btn-spinner" />
+                                                <span>Saving Record...</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <span>Save Inspection Record</span>
+                                                <span className="btn-shortcut">↵</span>
+                                            </>
+                                        )}
                                     </button>
                                 </div>
-
-                                <button
-                                    type="button"
-                                    className="btn btn-primary btn-save-record"
-                                    onClick={handleSave}
-                                    disabled={saving}
-                                >
-                                    {saving ? (
-                                        <>
-                                            <span className="btn-spinner" />
-                                            <span>Saving & Verifying...</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <span>Save Inspection Record</span>
-                                            <span className="btn-shortcut">↵</span>
-                                        </>
-                                    )}
-                                </button>
-                            </div>
-                        </section>
-                    </div>
+                            </section>
+                        </div>
+                    ) : (
+                        <AccessDeniedView title="Creation Restricted" message="You do not have permission to create new inspection records." />
+                    )
                 )}
 
                 {/* =================================================
                     TAB 3: RECORDS EXPLORER
                 ================================================= */}
                 {activeTab === "records" && (
-                    <div className="tab-pane active-pane">
-                        {/* SEARCH & FILTER SECTION */}
-                        <section className="panel search-filter-panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">DATABASE QUERY</span>
-                                    <h2>Filter & Search Inspection Records</h2>
-                                    <p className="section-subtitle">Search across test archives by Heading, Customer, UID, or Date.</p>
-                                </div>
-                                <div className="export-action-group">
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary btn-export"
-                                        onClick={() => exportRecordsToCSV(searchResults.length > 0 ? searchResults : allRecords)}
-                                        disabled={!allRecords.length && !searchResults.length}
-                                        title="Export current table data to CSV file"
-                                    >
-                                        <span className="btn-icon">⬇</span>
-                                        <span>Export to CSV</span>
-                                    </button>
-                                </div>
-                            </div>
+                    (canViewRecords || canSearchRecords) ? (
+                        <div className="tab-pane active-pane">
+                            {/* SEARCH & FILTER SECTION */}
+                            {canSearchRecords && (
+                                <section className="panel search-filter-panel">
+                                    <div className="section-heading-row">
+                                        <div>
+                                            <span className="section-kicker">DATABASE QUERY</span>
+                                            <h2>Filter & Search Inspection Records</h2>
+                                            <p className="section-subtitle">Search across test archives by Heading, Customer, UID, or Date.</p>
+                                        </div>
+                                        <div className="export-action-group">
+                                            {canExportRecords && (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-secondary btn-export"
+                                                    onClick={() => {
+                                                        const targetList = searchResults.length > 0 ? searchResults : allRecords;
+                                                        exportRecordsToCSV(targetList);
+                                                        toast.success("CSV Export Completed", `Exported ${targetList.length} inspection records to CSV file.`);
+                                                    }}
+                                                    disabled={!allRecords.length && !searchResults.length}
+                                                    title="Export current table data to CSV file"
+                                                >
+                                                    <span className="btn-icon">⬇</span>
+                                                    <span>Export to CSV</span>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
 
-                            <form className="search-grid" onSubmit={handleSearch}>
-                                <div className="search-field">
-                                    <label htmlFor="search-heading">Heading</label>
-                                    <input
-                                        id="search-heading"
-                                        type="text"
-                                        list="heading-options"
-                                        value={searchHeading}
-                                        onChange={(e) => setSearchHeading(e.target.value)}
-                                        placeholder="Filter heading..."
-                                    />
-                                </div>
+                                    <form className="search-grid" onSubmit={handleSearch}>
+                                        <div className="search-field">
+                                            <label htmlFor="search-heading">Heading</label>
+                                            <input
+                                                id="search-heading"
+                                                type="text"
+                                                list="heading-options"
+                                                value={searchHeading}
+                                                onChange={(e) => setSearchHeading(e.target.value)}
+                                                placeholder="Filter heading..."
+                                            />
+                                        </div>
 
-                                <div className="search-field">
-                                    <label htmlFor="search-customer">Customer Name</label>
-                                    <input
-                                        id="search-customer"
-                                        type="text"
-                                        list="customer-options"
-                                        value={searchCustomer}
-                                        onChange={(e) => setSearchCustomer(e.target.value)}
-                                        placeholder="Filter customer..."
-                                    />
-                                </div>
+                                        <div className="search-field">
+                                            <label htmlFor="search-customer">Customer Name</label>
+                                            <input
+                                                id="search-customer"
+                                                type="text"
+                                                list="customer-options"
+                                                value={searchCustomer}
+                                                onChange={(e) => setSearchCustomer(e.target.value)}
+                                                placeholder="Filter customer..."
+                                            />
+                                        </div>
 
-                                <div className="search-field">
-                                    <label htmlFor="search-uid">UID Number</label>
-                                    <input
-                                        id="search-uid"
-                                        type="text"
-                                        value={searchUid}
-                                        onChange={(e) => setSearchUid(e.target.value)}
-                                        placeholder="Exact or partial UID..."
-                                    />
-                                </div>
+                                        <div className="search-field">
+                                            <label htmlFor="search-uid">UID Number</label>
+                                            <input
+                                                id="search-uid"
+                                                type="text"
+                                                value={searchUid}
+                                                onChange={(e) => setSearchUid(e.target.value)}
+                                                placeholder="Exact or partial UID..."
+                                            />
+                                        </div>
 
-                                <div className="search-field">
-                                    <label htmlFor="search-date">Inspection Date</label>
-                                    <input
-                                        id="search-date"
-                                        type="date"
-                                        value={searchDate}
-                                        onChange={(e) => setSearchDate(e.target.value)}
-                                    />
-                                </div>
+                                        <div className="search-field">
+                                            <label htmlFor="search-date">Inspection Date</label>
+                                            <input
+                                                id="search-date"
+                                                type="date"
+                                                value={searchDate}
+                                                onChange={(e) => setSearchDate(e.target.value)}
+                                            />
+                                        </div>
 
-                                <div className="search-buttons">
-                                    <button type="submit" className="btn btn-primary" disabled={searching}>
-                                        {searching ? "Searching..." : "Apply Filters"}
-                                    </button>
-                                    <button type="button" className="btn btn-secondary" onClick={handleClearSearch}>
-                                        Clear
-                                    </button>
-                                </div>
-                            </form>
+                                        <div className="search-buttons">
+                                            <button type="submit" className="btn btn-primary" disabled={searching}>
+                                                {searching ? "Searching..." : "Apply Filters"}
+                                            </button>
+                                            <button type="button" className="btn btn-secondary" onClick={handleClearSearch}>
+                                                Clear
+                                            </button>
+                                        </div>
+                                    </form>
 
-                            {searchMessage.text && (
-                                <p className={`message message-${searchMessage.type}`}>{searchMessage.text}</p>
+                                    {searchMessage.text && (
+                                        <p className={`message message-${searchMessage.type}`}>{searchMessage.text}</p>
+                                    )}
+                                </section>
                             )}
-                        </section>
 
-                        {/* SEARCH RESULTS (IF ACTIVE) */}
-                        {searchResults.length > 0 && (
-                            <section className="panel search-results-panel">
+                            {/* SEARCH RESULTS */}
+                            {searchResults.length > 0 && (
+                                <section className="panel search-results-panel">
+                                    <div className="section-heading-row">
+                                        <div>
+                                            <span className="section-kicker">QUERY RESULTS</span>
+                                            <h2>Search Matches ({searchResults.length})</h2>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary small-btn"
+                                            onClick={handleClearSearch}
+                                        >
+                                            Dismiss Search
+                                        </button>
+                                    </div>
+
+                                    <RecordsTable
+                                        rows={sortRows(searchResults)}
+                                        canEdit={canEditRecord}
+                                        canDelete={canDeleteRecord}
+                                        onEdit={openEditor}
+                                        onDelete={openDeleteModal}
+                                        sortField={sortField}
+                                        sortDirection={sortDirection}
+                                        onSort={handleSort}
+                                    />
+                                </section>
+                            )}
+
+                            {/* MASTER RECORDS TABLE */}
+                            <section className="panel">
                                 <div className="section-heading-row">
                                     <div>
-                                        <span className="section-kicker">QUERY RESULTS</span>
-                                        <h2>Search Matches ({searchResults.length})</h2>
+                                        <span className="section-kicker">MASTER RECORD DIRECTORY</span>
+                                        <h2>Inspection Log Archives</h2>
+                                        <p className="section-subtitle">
+                                            Showing latest <strong>{allRecords.length}</strong> records from the database. Click headers to sort.
+                                            {!canEditRecord && !canDeleteRecord && <span className="readonly-badge"> (Read-Only Mode)</span>}
+                                        </p>
                                     </div>
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary small-btn"
-                                        onClick={handleClearSearch}
-                                    >
-                                        Dismiss Search
-                                    </button>
-                                </div>
+                                    <div className="table-controls-right">
+                                        {canExportRecords && !canSearchRecords && (
+                                            <button
+                                                type="button"
+                                                className="btn btn-secondary"
+                                                onClick={() => {
+                                                    exportRecordsToCSV(allRecords);
+                                                    toast.success("CSV Export Completed", `Exported ${allRecords.length} inspection records to CSV file.`);
+                                                }}
+                                            >
+                                                Export to CSV
+                                            </button>
+                                        )}
+                                        <label className="limit-selector">
+                                            <span>Show:</span>
+                                            <select
+                                                value={recordLimit}
+                                                onChange={(e) => {
+                                                    const newLim = Number(e.target.value);
+                                                    setRecordLimit(newLim);
+                                                    loadAllRecords(newLim);
+                                                }}
+                                            >
+                                                <option value={10}>10 records</option>
+                                                <option value={25}>25 records</option>
+                                                <option value={50}>50 records</option>
+                                                <option value={100}>100 records</option>
+                                            </select>
+                                        </label>
 
-                                <RecordsTable
-                                    rows={sortRows(searchResults)}
-                                    isAdmin={isAdmin}
-                                    onEdit={openEditor}
-                                    onDelete={openDeleteModal}
-                                    sortField={sortField}
-                                    sortDirection={sortDirection}
-                                    onSort={handleSort}
-                                />
-                            </section>
-                        )}
-
-                        {/* MASTER RECORDS TABLE */}
-                        <section className="panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">MASTER RECORD DIRECTORY</span>
-                                    <h2>Inspection Log Archives</h2>
-                                    <p className="section-subtitle">
-                                        Showing latest <strong>{allRecords.length}</strong> records from the database. Click headers to sort.
-                                    </p>
-                                </div>
-                                <div className="table-controls-right">
-                                    <label className="limit-selector">
-                                        <span>Show:</span>
-                                        <select
-                                            value={recordLimit}
-                                            onChange={(e) => {
-                                                const newLim = Number(e.target.value);
-                                                setRecordLimit(newLim);
-                                                loadAllRecords(newLim);
-                                            }}
+                                        <button
+                                            type="button"
+                                            className="btn btn-secondary"
+                                            onClick={() => loadAllRecords(recordLimit)}
+                                            disabled={loadingAll}
+                                            title="Reload records from server"
                                         >
-                                            <option value={10}>10 records</option>
-                                            <option value={25}>25 records</option>
-                                            <option value={50}>50 records</option>
-                                            <option value={100}>100 records</option>
-                                        </select>
-                                    </label>
-
-                                    <button
-                                        type="button"
-                                        className="btn btn-secondary"
-                                        onClick={() => loadAllRecords(recordLimit)}
-                                        disabled={loadingAll}
-                                        title="Reload records from server"
-                                    >
-                                        {loadingAll ? "Refreshing..." : "↻ Refresh Table"}
-                                    </button>
+                                            {loadingAll ? "Refreshing..." : "↻ Refresh Table"}
+                                        </button>
+                                    </div>
                                 </div>
-                            </div>
 
-                            {allMessage.text && (
-                                <p className={`message message-${allMessage.type}`}>{allMessage.text}</p>
-                            )}
+                                {allMessage.text && (
+                                    <p className={`message message-${allMessage.type}`}>{allMessage.text}</p>
+                                )}
 
-                            {loadingAll && allRecords.length === 0 ? (
-                                <div className="empty-state">
-                                    <span className="empty-state-icon">⏳</span>
-                                    <strong>Loading records...</strong>
-                                    <span>Retrieving inspection dataset from server.</span>
-                                </div>
-                            ) : (
-                                <RecordsTable
-                                    rows={sortRows(allRecords)}
-                                    isAdmin={isAdmin}
-                                    onEdit={openEditor}
-                                    onDelete={openDeleteModal}
-                                    sortField={sortField}
-                                    sortDirection={sortDirection}
-                                    onSort={handleSort}
-                                />
-                            )}
-                        </section>
-                    </div>
+                                {loadingAll && allRecords.length === 0 ? (
+                                    <div className="empty-state">
+                                        <span className="empty-state-icon">⏳</span>
+                                        <strong>Loading records...</strong>
+                                        <span>Retrieving inspection dataset from server.</span>
+                                    </div>
+                                ) : (
+                                    <RecordsTable
+                                        rows={sortRows(allRecords)}
+                                        canEdit={canEditRecord}
+                                        canDelete={canDeleteRecord}
+                                        onEdit={openEditor}
+                                        onDelete={openDeleteModal}
+                                        sortField={sortField}
+                                        sortDirection={sortDirection}
+                                        onSort={handleSort}
+                                    />
+                                )}
+                            </section>
+                        </div>
+                    ) : (
+                        <AccessDeniedView title="Records Restricted" message="You do not have permission to view inspection records." />
+                    )
                 )}
 
                 {/* =================================================
                     TAB 4: SHIFT ANALYTICS
                 ================================================= */}
                 {activeTab === "shifts" && (
-                    <div className="tab-pane active-pane">
-                        <section className="panel last-7-days-panel">
-                            <div className="section-heading-row">
-                                <div>
-                                    <span className="section-kicker">OPERATIONAL SHIFT TRACKING</span>
-                                    <h2>Last 7 Days Shift Breakdown</h2>
-                                    <p className="section-subtitle">
-                                        Shift A (06:00-14:00) · Shift B (14:00-22:00) · Shift C (22:00-06:00 Next Day)
-                                    </p>
-                                </div>
-                                <button
-                                    type="button"
-                                    className="btn btn-secondary summary-refresh-btn"
-                                    onClick={loadLast7Days}
-                                    disabled={loadingLast7Days}
-                                >
-                                    {loadingLast7Days ? "Refreshing..." : "↻ Refresh Shifts"}
-                                </button>
-                            </div>
-
-                            {last7DaysMessage.text && (
-                                <p className={`message message-${last7DaysMessage.type}`}>
-                                    {last7DaysMessage.text}
-                                </p>
-                            )}
-
-                            {loadingLast7Days && last7Days.length === 0 && (
-                                <div className="empty-state">
-                                    <span className="empty-state-icon">⏳</span>
-                                    <strong>Loading shift metrics...</strong>
-                                    <span>Calculating 7-day shift aggregation.</span>
-                                </div>
-                            )}
-
-                            {!loadingLast7Days && last7Days.length === 0 && !last7DaysMessage.text && (
-                                <div className="empty-state">
-                                    <span className="empty-state-icon">📊</span>
-                                    <strong>No shift summary data</strong>
-                                    <span>Inspections recorded will appear grouped by shift date.</span>
-                                </div>
-                            )}
-
-                            {last7Days.length > 0 && (
-                                <div className="last-7-days-grid">
-                                    {last7Days.map((day) => {
-                                        const dTotal = Number(day.data_count || 0);
-                                        return (
-                                            <div className="day-summary-card shift-summary-card" key={day.record_date}>
-                                                <div className="day-card-header">
-                                                    <div className="day-summary-date">
-                                                        {new Date(`${day.record_date}T00:00:00`).toLocaleDateString("en-GB", {
-                                                            weekday: "short",
-                                                            day: "2-digit",
-                                                            month: "short",
-                                                            year: "numeric"
-                                                        })}
-                                                    </div>
-                                                    <div className="shift-summary-total">
-                                                        <strong>{day.data_count}</strong> total
-                                                    </div>
-                                                </div>
-
-                                                <div className="shift-breakdown-list">
-                                                    <div className="shift-row shift-a">
-                                                        <div className="shift-row-info">
-                                                            <span className="shift-tag-dot tag-dot-a" />
-                                                            <span className="shift-label">Shift A</span>
-                                                            <small className="shift-timing">06:00-14:00</small>
-                                                        </div>
-                                                        <div className="shift-row-val">
-                                                            <strong>{day.a_shift_count ?? 0}</strong>
-                                                            <div className="shift-mini-bar">
-                                                                <div
-                                                                    className="mini-bar-fill fill-a"
-                                                                    style={{ width: `${dTotal ? ((day.a_shift_count || 0) / dTotal) * 100 : 0}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="shift-row shift-b">
-                                                        <div className="shift-row-info">
-                                                            <span className="shift-tag-dot tag-dot-b" />
-                                                            <span className="shift-label">Shift B</span>
-                                                            <small className="shift-timing">14:00-22:00</small>
-                                                        </div>
-                                                        <div className="shift-row-val">
-                                                            <strong>{day.b_shift_count ?? 0}</strong>
-                                                            <div className="shift-mini-bar">
-                                                                <div
-                                                                    className="mini-bar-fill fill-b"
-                                                                    style={{ width: `${dTotal ? ((day.b_shift_count || 0) / dTotal) * 100 : 0}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    <div className="shift-row shift-c">
-                                                        <div className="shift-row-info">
-                                                            <span className="shift-tag-dot tag-dot-c" />
-                                                            <span className="shift-label">Shift C</span>
-                                                            <small className="shift-timing">22:00-06:00</small>
-                                                        </div>
-                                                        <div className="shift-row-val">
-                                                            <strong>{day.c_shift_count ?? 0}</strong>
-                                                            <div className="shift-mini-bar">
-                                                                <div
-                                                                    className="mini-bar-fill fill-c"
-                                                                    style={{ width: `${dTotal ? ((day.c_shift_count || 0) / dTotal) * 100 : 0}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-
-                            {/* CUSTOM DATE LOOKUP */}
-                            <div className="date-summary-search">
-                                <div className="date-summary-header">
-                                    <span className="section-kicker">HISTORICAL INQUIRY</span>
-                                    <h3>Look Up Shift Total for Any Date</h3>
-                                    <p>Select any past calendar date to view shift distributions.</p>
-                                </div>
-
-                                <div className="date-summary-controls">
-                                    <label className="date-picker-label">
-                                        <span>Select Date</span>
-                                        <input
-                                            type="date"
-                                            value={selectedSummaryDate}
-                                            onChange={(e) => setSelectedSummaryDate(e.target.value)}
-                                        />
-                                    </label>
+                    canViewShifts ? (
+                        <div className="tab-pane active-pane">
+                            <section className="panel last-7-days-panel">
+                                <div className="section-heading-row">
+                                    <div>
+                                        <span className="section-kicker">OPERATIONAL SHIFT TRACKING</span>
+                                        <h2>Last 7 Days Shift Breakdown</h2>
+                                        <p className="section-subtitle">
+                                            Shift A (06:00-14:00) · Shift B (14:00-22:00) · Shift C (22:00-06:00 Next Day)
+                                        </p>
+                                    </div>
                                     <button
                                         type="button"
-                                        className="btn btn-primary"
-                                        onClick={loadDateSummary}
-                                        disabled={!selectedSummaryDate || dateSummaryLoading}
+                                        className="btn btn-secondary summary-refresh-btn"
+                                        onClick={loadLast7Days}
+                                        disabled={loadingLast7Days}
                                     >
-                                        {dateSummaryLoading ? "Querying..." : "View Shift Totals"}
+                                        {loadingLast7Days ? "Refreshing..." : "↻ Refresh Shifts"}
                                     </button>
                                 </div>
 
-                                {dateSummaryMessage.text && (
-                                    <p className={`message message-${dateSummaryMessage.type}`}>{dateSummaryMessage.text}</p>
+                                {last7DaysMessage.text && (
+                                    <p className={`message message-${last7DaysMessage.type}`}>
+                                        {last7DaysMessage.text}
+                                    </p>
                                 )}
 
-                                {dateSummary && (
-                                    <div className="date-summary-result-card">
-                                        <div className="summary-stat-box stat-grand-total">
-                                            <span>Total Day Records</span>
-                                            <strong>{dateSummary.data_count ?? 0}</strong>
-                                        </div>
-                                        <div className="summary-stat-box stat-shift-a">
-                                            <span>A Shift (06:00-14:00)</span>
-                                            <strong>{dateSummary.a_shift_count ?? 0}</strong>
-                                        </div>
-                                        <div className="summary-stat-box stat-shift-b">
-                                            <span>B Shift (14:00-22:00)</span>
-                                            <strong>{dateSummary.b_shift_count ?? 0}</strong>
-                                        </div>
-                                        <div className="summary-stat-box stat-shift-c">
-                                            <span>C Shift (22:00-06:00)</span>
-                                            <strong>{dateSummary.c_shift_count ?? 0}</strong>
-                                        </div>
+                                {last7Days.length > 0 && (
+                                    <div className="last-7-days-grid">
+                                        {last7Days.map((day) => {
+                                            const dTotal = Number(day.data_count || 0);
+                                            return (
+                                                <div className="day-summary-card shift-summary-card" key={day.record_date}>
+                                                    <div className="day-card-header">
+                                                        <div className="day-summary-date">
+                                                            {new Date(`${day.record_date}T00:00:00`).toLocaleDateString("en-GB", {
+                                                                weekday: "short",
+                                                                day: "2-digit",
+                                                                month: "short",
+                                                                year: "numeric"
+                                                            })}
+                                                        </div>
+                                                        <div className="shift-summary-total">
+                                                            <strong>{day.data_count}</strong> total
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="shift-breakdown-list">
+                                                        <div className="shift-row shift-a">
+                                                            <div className="shift-row-info">
+                                                                <span className="shift-tag-dot tag-dot-a" />
+                                                                <span className="shift-label">Shift A</span>
+                                                                <small className="shift-timing">06:00-14:00</small>
+                                                            </div>
+                                                            <div className="shift-row-val">
+                                                                <strong>{day.a_shift_count ?? 0}</strong>
+                                                                <div className="shift-mini-bar">
+                                                                    <div
+                                                                        className="mini-bar-fill fill-a"
+                                                                        style={{ width: `${dTotal ? ((day.a_shift_count || 0) / dTotal) * 100 : 0}%` }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="shift-row shift-b">
+                                                            <div className="shift-row-info">
+                                                                <span className="shift-tag-dot tag-dot-b" />
+                                                                <span className="shift-label">Shift B</span>
+                                                                <small className="shift-timing">14:00-22:00</small>
+                                                            </div>
+                                                            <div className="shift-row-val">
+                                                                <strong>{day.b_shift_count ?? 0}</strong>
+                                                                <div className="shift-mini-bar">
+                                                                    <div
+                                                                        className="mini-bar-fill fill-b"
+                                                                        style={{ width: `${dTotal ? ((day.b_shift_count || 0) / dTotal) * 100 : 0}%` }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="shift-row shift-c">
+                                                            <div className="shift-row-info">
+                                                                <span className="shift-tag-dot tag-dot-c" />
+                                                                <span className="shift-label">Shift C</span>
+                                                                <small className="shift-timing">22:00-06:00</small>
+                                                            </div>
+                                                            <div className="shift-row-val">
+                                                                <strong>{day.c_shift_count ?? 0}</strong>
+                                                                <div className="shift-mini-bar">
+                                                                    <div
+                                                                        className="mini-bar-fill fill-c"
+                                                                        style={{ width: `${dTotal ? ((day.c_shift_count || 0) / dTotal) * 100 : 0}%` }}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 )}
-                            </div>
-                        </section>
-                    </div>
+
+                                {/* CUSTOM DATE LOOKUP */}
+                                <div className="date-summary-search">
+                                    <div className="date-summary-header">
+                                        <span className="section-kicker">HISTORICAL INQUIRY</span>
+                                        <h3>Look Up Shift Total for Any Date</h3>
+                                        <p>Select any past calendar date to view shift distributions.</p>
+                                    </div>
+
+                                    <div className="date-summary-controls">
+                                        <label className="date-picker-label">
+                                            <span>Select Date</span>
+                                            <input
+                                                type="date"
+                                                value={selectedSummaryDate}
+                                                onChange={(e) => setSelectedSummaryDate(e.target.value)}
+                                            />
+                                        </label>
+                                        <button
+                                            type="button"
+                                            className="btn btn-primary"
+                                            onClick={loadDateSummary}
+                                            disabled={!selectedSummaryDate || dateSummaryLoading}
+                                        >
+                                            {dateSummaryLoading ? "Querying..." : "View Shift Totals"}
+                                        </button>
+                                    </div>
+
+                                    {dateSummaryMessage.text && (
+                                        <p className={`message message-${dateSummaryMessage.type}`}>{dateSummaryMessage.text}</p>
+                                    )}
+
+                                    {dateSummary && (
+                                        <div className="date-summary-result-card">
+                                            <div className="summary-stat-box stat-grand-total">
+                                                <span>Total Day Records</span>
+                                                <strong>{dateSummary.data_count ?? 0}</strong>
+                                            </div>
+                                            <div className="summary-stat-box stat-shift-a">
+                                                <span>A Shift (06:00-14:00)</span>
+                                                <strong>{dateSummary.a_shift_count ?? 0}</strong>
+                                            </div>
+                                            <div className="summary-stat-box stat-shift-b">
+                                                <span>B Shift (14:00-22:00)</span>
+                                                <strong>{dateSummary.b_shift_count ?? 0}</strong>
+                                            </div>
+                                            <div className="summary-stat-box stat-shift-c">
+                                                <span>C Shift (22:00-06:00)</span>
+                                                <strong>{dateSummary.c_shift_count ?? 0}</strong>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            </section>
+                        </div>
+                    ) : (
+                        <AccessDeniedView title="Shift Analytics Restricted" message="You do not have permission to view Shift Analytics." />
+                    )
                 )}
 
                 {/* =================================================
-                    TAB 5: USER MANAGEMENT (SUPER ADMIN)
+                    TAB 5: ADMINISTRATOR CONSOLE
                 ================================================= */}
-                {activeTab === "users" && isSuperAdmin && (
-                    <div className="tab-pane active-pane">
-                        <UserManagement />
-                    </div>
+                {activeTab === "users" && (
+                    canAccessAdmin ? (
+                        <div className="tab-pane active-pane">
+                            <UserManagement />
+                        </div>
+                    ) : (
+                        <AccessDeniedView title="Administration Restricted" message="Only authorized administrators may access this console." />
+                    )
                 )}
 
                 {/* =================================================
                     MODAL: EDIT SAVED RECORD
                 ================================================= */}
-                {editingRecord && isAdmin && (
+                {editingRecord && canEditRecord && (
                     <div className="record-modal-backdrop" onClick={() => !editSaving && setEditingRecord(null)}>
                         <div className="record-modal" onClick={(e) => e.stopPropagation()}>
                             <div className="record-modal-header">
                                 <div>
-                                    <span className="section-kicker">ADMIN PRIVILEGE</span>
+                                    <span className="section-kicker">AUTHORIZED EDIT</span>
                                     <h2>Edit Inspection Record</h2>
                                     <p>Update inspection metadata or ultrasonic reading points.</p>
                                 </div>
@@ -1588,11 +1767,21 @@ function MainApp() {
                                                         ? "date"
                                                         : col.key === "record_time"
                                                         ? "time"
+                                                        : LOC_KEYS.includes(col.key)
+                                                        ? "text"
                                                         : col.inputType || "text"
                                                 }
+                                                inputMode={LOC_KEYS.includes(col.key) ? "decimal" : undefined}
                                                 value={editingRecord[col.key] ?? ""}
                                                 onChange={(e) =>
-                                                    setEditingRecord((prev) => ({ ...prev, [col.key]: e.target.value }))
+                                                    setEditingRecord((prev) => ({
+                                                        ...prev,
+                                                        [col.key]: col.key === "uid"
+                                                            ? formatUid(e.target.value, prev.uid)
+                                                            : LOC_KEYS.includes(col.key)
+                                                            ? formatLocationReading(e.target.value, prev[col.key])
+                                                            : e.target.value
+                                                    }))
                                                 }
                                                 required={
                                                     col.key === "heading" ||
@@ -1631,7 +1820,7 @@ function MainApp() {
                 {/* =================================================
                     MODAL: DELETE RECORD CONFIRMATION
                 ================================================= */}
-                {deleteModalRecord && isAdmin && (
+                {deleteModalRecord && canDeleteRecord && (
                     <div className="record-modal-backdrop" onClick={() => !deleteSubmitting && setDeleteModalRecord(null)}>
                         <div className="record-modal um-modal" onClick={(e) => e.stopPropagation()}>
                             <div className="record-modal-header">
@@ -1687,7 +1876,7 @@ function MainApp() {
             <footer className="app-footer">
                 <div className="footer-content">
                     <span>LEGION System · Ultrasonic Testing Operations · Protected Workplace</span>
-                    <span className="footer-version">v2.4 Enterprise Edition</span>
+                    <span className="footer-version">v2.5 Role-Based Enterprise Edition</span>
                 </div>
             </footer>
         </div>

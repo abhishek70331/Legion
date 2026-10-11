@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const path = require("path");
+const fs = require("fs");
 require("dotenv").config();
 
 const pool = require("./db");
@@ -9,7 +11,12 @@ const {
     comparePassword,
     createToken,
     hashToken,
-    requireAuth
+    getUserPermissions,
+    requireAuth,
+    requirePermission,
+    requireAdminFresh,
+    requireSuperAdminFresh,
+    logAuditEvent
 } = require("./auth");
 const {
     loginRateLimit,
@@ -18,58 +25,6 @@ const {
 } = require("./security");
 
 const app = express();
-
-
-// Re-check the current database role for every privileged operation. This prevents
-// a deleted/demoted account's still-valid JWT from retaining elevated privileges.
-async function requireAdminFresh(req, res, next) {
-    try {
-        const result = await pool.query(
-            "SELECT id, username, role FROM users WHERE id = $1",
-            [req.user?.id]
-        );
-
-        const currentUser = result.rows[0];
-        if (!currentUser) {
-            return res.status(401).json({ message: "User no longer exists" });
-        }
-
-        if (!["admin", "superadmin"].includes(currentUser.role)) {
-            return res.status(403).json({ message: "Admin access required" });
-        }
-
-        req.user = { ...req.user, ...currentUser };
-        next();
-    } catch (error) {
-        console.error("Admin authorization check error:", error);
-        return res.status(500).json({ message: "Failed to verify admin access" });
-    }
-}
-
-// User management is reserved for the Super Admin role.
-async function requireSuperAdminFresh(req, res, next) {
-    try {
-        const result = await pool.query(
-            "SELECT id, username, role FROM users WHERE id = $1",
-            [req.user?.id]
-        );
-
-        const currentUser = result.rows[0];
-        if (!currentUser) {
-            return res.status(401).json({ message: "User no longer exists" });
-        }
-
-        if (currentUser.role !== "superadmin") {
-            return res.status(403).json({ message: "Super Admin access required" });
-        }
-
-        req.user = { ...req.user, ...currentUser };
-        next();
-    } catch (error) {
-        console.error("Super Admin authorization check error:", error);
-        return res.status(500).json({ message: "Failed to verify Super Admin access" });
-    }
-}
 
 // Render/Vercel-style reverse proxy: use the first trusted proxy hop for req.ip.
 app.set("trust proxy", 1);
@@ -130,90 +85,23 @@ app.use(cors({
     methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 }));
-app.use(express.json({ limit: "100kb" }));
+app.use(express.json({ limit: "150kb" }));
+
+const distDir = path.resolve(__dirname, "../frontend/dist");
+if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+}
 
 app.get(["/health", "/api/health"], (_req, res) => {
     res.json({ ok: true, service: "legion-api" });
 });
 
-
-// ------------------------------------
-// AUTH INITIALIZATION
-// ------------------------------------
-
-async function ensurePrivilegedUsers() {
-    const adminUsername = (process.env.ADMIN_USERNAME || "admin").trim();
-    const adminPassword = process.env.ADMIN_PASSWORD;
-    const superAdminUsername = (process.env.SUPERADMIN_USERNAME || "superadmin").trim();
-    const superAdminPassword = process.env.SUPERADMIN_PASSWORD;
-
-    if (!adminPassword) {
-        throw new Error("ADMIN_PASSWORD must be set in backend/.env");
-    }
-    if (!superAdminPassword) {
-        throw new Error("SUPERADMIN_PASSWORD must be set in backend/.env");
-    }
-    if (adminUsername.toLowerCase() === superAdminUsername.toLowerCase()) {
-        throw new Error("ADMIN_USERNAME and SUPERADMIN_USERNAME must be different");
-    }
-
-    const ensureAccount = async ({ username, password, role, label }) => {
-        const existing = await pool.query(
-            "SELECT id, role FROM users WHERE username = $1",
-            [username]
-        );
-
-        if (existing.rows.length === 0) {
-            const hash = await hashPassword(password);
-            await pool.query(
-                "INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3)",
-                [username, hash, role]
-            );
-            console.log(`✅ ${label} user created: ${username}`);
-        } else {
-            const current = existing.rows[0];
-            if (current.role !== role) {
-                const hash = await hashPassword(password);
-                await pool.query(
-                    "UPDATE users SET role = $1, password_hash = $2, is_banned = FALSE WHERE id = $3",
-                    [role, hash, current.id]
-                );
-                console.log(`✅ ${label} role corrected and password initialized: ${username}`);
-            } else {
-                console.log(`✅ ${label} user ready: ${username}`);
-            }
-        }
-    };
-
-    await ensureAccount({
-        username: adminUsername,
-        password: adminPassword,
-        role: "admin",
-        label: "Admin"
-    });
-
-    await ensureAccount({
-        username: superAdminUsername,
-        password: superAdminPassword,
-        role: "superadmin",
-        label: "Super Admin"
-    });
-}
-
-
-// ------------------------------------
-// HOME
-// ------------------------------------
-
-app.get("/", (req, res) => {
-    res.json({
-        message: "UID Data API is running"
-    });
+app.get("/api", (_req, res) => {
+    res.json({ message: "Legion Ultrasonic Testing API is active" });
 });
 
-
 // ------------------------------------
-// USER MANAGEMENT (SUPER ADMIN ONLY)
+// HELPERS
 // ------------------------------------
 
 function parseUserId(value) {
@@ -225,7 +113,12 @@ function publicUser(row) {
     return {
         id: row.id,
         username: row.username,
-        role: row.role
+        email: row.email || null,
+        full_name: row.full_name || null,
+        role: row.role,
+        status: row.status || (row.is_banned ? "suspended" : "active"),
+        is_banned: Boolean(row.is_banned),
+        created_at: row.created_at
     };
 }
 
@@ -243,17 +136,15 @@ async function purgeStaleSessions(userId) {
 async function createSessionWithLimit(user, token, req) {
     const client = await pool.connect();
     try {
-        await client.query('BEGIN');
+        await client.query("BEGIN");
         const tokenHash = hashToken(token);
         await client.query(
             `INSERT INTO active_sessions
                 (user_id, token_hash, ip_address, user_agent)
              VALUES ($1, $2, $3, $4)`,
-            [user.id, tokenHash, req.ip || null, req.get('user-agent') || null]
+            [user.id, tokenHash, req.ip || null, req.get("user-agent") || null]
         );
 
-        // Keep only the newest allowed number of sessions. MAX_ACTIVE_SESSIONS
-        // is 1 by default, so a new login replaces the previous login.
         await client.query(
             `DELETE FROM active_sessions
              WHERE user_id = $1
@@ -265,9 +156,9 @@ async function createSessionWithLimit(user, token, req) {
                )`,
             [user.id, MAX_ACTIVE_SESSIONS]
         );
-        await client.query('COMMIT');
+        await client.query("COMMIT");
     } catch (error) {
-        await client.query('ROLLBACK');
+        await client.query("ROLLBACK");
         throw error;
     } finally {
         client.release();
@@ -275,96 +166,262 @@ async function createSessionWithLimit(user, token, req) {
 }
 
 // ------------------------------------
-// LOGIN
+// AUTHENTICATION ENDPOINTS
 // ------------------------------------
 
-app.post('/api/auth/login', loginRateLimit, async (req, res) => {
+/**
+ * Login: accepts username OR email, plus password.
+ */
+app.post("/api/auth/login", loginRateLimit, async (req, res) => {
     try {
-        const username = String(req.body.username || '').trim();
-        const password = String(req.body.password || '');
+        const identifier = String(req.body.username || req.body.email || "").trim();
+        const password = String(req.body.password || "");
 
-        if (!username || !password) {
-            return res.status(400).json({ message: 'Username and password are required' });
+        if (!identifier || !password) {
+            return res.status(400).json({ message: "Username or email and password are required" });
         }
-        if (username.length > 100 || password.length > 128) {
-            return res.status(400).json({ message: 'Invalid username or password' });
+        if (identifier.length > 255 || password.length > 128) {
+            return res.status(400).json({ message: "Invalid credentials" });
         }
 
         const result = await pool.query(
-            'SELECT id, username, password_hash, role, is_banned FROM users WHERE username = $1',
-            [username]
+            `SELECT id, username, email, full_name, password_hash, role, status, is_banned, created_at 
+             FROM users 
+             WHERE LOWER(username) = LOWER($1) OR (email IS NOT NULL AND LOWER(email) = LOWER($1))
+             LIMIT 1`,
+            [identifier]
         );
         const user = result.rows[0];
-        const DUMMY_PASSWORD_HASH = '$2b$12$ozWhC8vseZnjGcl34/dTwOmV07ASZtwMnyDSPQKMZVo9Nk6r0DQ9e';
-        const passwordMatches = await comparePassword(password, user?.password_hash || DUMMY_PASSWORD_HASH);
+
+        const DUMMY_HASH = "$2b$12$ozWhC8vseZnjGcl34/dTwOmV07ASZtwMnyDSPQKMZVo9Nk6r0DQ9e";
+        const passwordMatches = await comparePassword(password, user?.password_hash || DUMMY_HASH);
 
         if (!user || !passwordMatches) {
-            const limiter = req.loginRateLimit || { ip: req.ip, username };
+            const limiter = req.loginRateLimit || { ip: req.ip, username: identifier };
             recordLoginFailure(limiter);
-            return res.status(401).json({ message: 'Invalid username or password' });
+
+            await logAuditEvent({
+                actorUsername: identifier,
+                action: "LOGIN_FAILED",
+                targetType: "user",
+                targetId: user?.id,
+                details: { reason: "Bad credentials", identifier },
+                ipAddress: req.ip
+            });
+
+            return res.status(401).json({ message: "Invalid username/email or password" });
         }
 
-        if (user.is_banned) {
+        if (user.is_banned || user.status === "suspended") {
+            await logAuditEvent({
+                actorId: user.id,
+                actorUsername: user.username,
+                action: "LOGIN_BLOCKED",
+                targetType: "user",
+                targetId: user.id,
+                details: { reason: "Account suspended" },
+                ipAddress: req.ip
+            });
+
             return res.status(403).json({
-                code: 'ACCOUNT_BANNED',
-                message: 'Your account has been banned. Please contact an administrator.'
+                code: "ACCOUNT_BANNED",
+                message: "Your account has been suspended. Please contact a Super Administrator."
             });
         }
 
-        clearSuccessfulLogin(req.loginRateLimit || { ip: req.ip, username });
+        if (user.status === "inactive") {
+            await logAuditEvent({
+                actorId: user.id,
+                actorUsername: user.username,
+                action: "LOGIN_BLOCKED",
+                targetType: "user",
+                targetId: user.id,
+                details: { reason: "Account deactivated" },
+                ipAddress: req.ip
+            });
+
+            return res.status(403).json({
+                code: "ACCOUNT_INACTIVE",
+                message: "Your account is currently inactive. Please contact an administrator to reactivate it."
+            });
+        }
+
+        clearSuccessfulLogin(req.loginRateLimit || { ip: req.ip, username: user.username });
         const token = createToken(user);
         await purgeStaleSessions(user.id);
         await createSessionWithLimit(user, token, req);
 
-        res.json({ token, user: publicUser(user) });
+        const permissions = await getUserPermissions(user.id, user.role);
+
+        await logAuditEvent({
+            actorId: user.id,
+            actorUsername: user.username,
+            action: "LOGIN_SUCCESS",
+            targetType: "user",
+            targetId: user.id,
+            details: { role: user.role, ip: req.ip },
+            ipAddress: req.ip
+        });
+
+        res.json({
+            token,
+            user: publicUser(user),
+            permissions
+        });
     } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ message: 'Login failed' });
+        console.error("Login error:", error);
+        res.status(500).json({ message: "Login failed" });
     }
 });
 
-app.post('/api/auth/logout', requireAuth, async (req, res) => {
+app.post("/api/auth/logout", requireAuth, async (req, res) => {
     try {
         await pool.query(
-            'DELETE FROM active_sessions WHERE user_id = $1 AND token_hash = $2',
+            "DELETE FROM active_sessions WHERE user_id = $1 AND token_hash = $2",
             [req.user.id, req.tokenHash]
         );
-        res.json({ message: 'Logged out' });
+
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "LOGOUT",
+            targetType: "session",
+            details: { ip: req.ip },
+            ipAddress: req.ip
+        });
+
+        res.json({ message: "Logged out successfully" });
     } catch (error) {
-        console.error('Logout error:', error);
-        res.status(500).json({ message: 'Failed to log out' });
+        console.error("Logout error:", error);
+        res.status(500).json({ message: "Failed to log out" });
     }
 });
 
-app.get('/api/auth/me', requireAuth, async (req, res) => {
+app.get("/api/auth/me", requireAuth, async (req, res) => {
     try {
         const result = await pool.query(
-            'SELECT id, username, role FROM users WHERE id = $1',
+            `SELECT id, username, email, full_name, role, status, is_banned, created_at, permissions_updated_at 
+             FROM users WHERE id = $1`,
             [req.user.id]
         );
-        if (!result.rows[0]) {
-            return res.status(401).json({ code: 'USER_NOT_FOUND', message: 'User no longer exists' });
+        const user = result.rows[0];
+        if (!user) {
+            return res.status(401).json({ code: "USER_NOT_FOUND", message: "User no longer exists" });
         }
-        res.json({ user: publicUser(result.rows[0]) });
+
+        if (user.is_banned || user.status === "suspended") {
+            return res.status(403).json({ code: "ACCOUNT_BANNED", message: "Your account has been suspended." });
+        }
+        if (user.status === "inactive") {
+            return res.status(403).json({ code: "ACCOUNT_INACTIVE", message: "Your account is deactivated." });
+        }
+
+        const permissions = await getUserPermissions(user.id, user.role);
+
+        res.json({
+            user: publicUser(user),
+            permissions
+        });
     } catch (error) {
-        console.error('Auth check error:', error);
-        res.status(500).json({ message: 'Failed to verify login' });
+        console.error("Auth check error:", error);
+        res.status(500).json({ message: "Failed to verify session" });
     }
 });
 
-app.get("/api/users", requireAuth, requireSuperAdminFresh, async (req, res) => {
+/**
+ * Forgot password request submission
+ */
+app.post("/api/auth/forgot-password", loginRateLimit, async (req, res) => {
     try {
-        const result = await pool.query(`
+        const identifier = String(req.body.username_or_email || "").trim();
+        const notes = String(req.body.notes || "").trim();
+
+        if (!identifier) {
+            return res.status(400).json({ message: "Please provide your username or email address" });
+        }
+
+        const userRes = await pool.query(
+            `SELECT id, username, email FROM users 
+             WHERE LOWER(username) = LOWER($1) OR (email IS NOT NULL AND LOWER(email) = LOWER($1))`,
+            [identifier]
+        );
+        const user = userRes.rows[0];
+
+        await pool.query(
+            `INSERT INTO password_reset_requests (username_or_email, user_id, notes, ip_address)
+             VALUES ($1, $2, $3, $4)`,
+            [identifier, user?.id || null, notes || "User requested password reset from login screen", req.ip]
+        );
+
+        await logAuditEvent({
+            actorId: user?.id || null,
+            actorUsername: user?.username || identifier,
+            action: "PASSWORD_RESET_REQUESTED",
+            targetType: "user",
+            targetId: user?.id,
+            details: { identifier, notes },
+            ipAddress: req.ip
+        });
+
+        res.json({
+            message: "Your password assistance request has been recorded. An administrator will review your account and issue reset instructions."
+        });
+    } catch (error) {
+        console.error("Forgot password request error:", error);
+        res.status(500).json({ message: "Failed to submit password reset request" });
+    }
+});
+
+// ------------------------------------
+// MODULES & PERMISSION METADATA
+// ------------------------------------
+
+app.get("/api/modules", requireAuth, async (_req, res) => {
+    try {
+        const result = await pool.query(
+            "SELECT module_key, name, category, description, supported_actions FROM modules ORDER BY category, name"
+        );
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Get modules error:", error);
+        res.status(500).json({ message: "Failed to load modules list" });
+    }
+});
+
+app.get("/api/roles", requireAuth, async (_req, res) => {
+    try {
+        const result = await pool.query("SELECT name, label, description FROM roles ORDER BY name");
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Get roles error:", error);
+        res.status(500).json({ message: "Failed to load roles" });
+    }
+});
+
+// ------------------------------------
+// USER MANAGEMENT ENDPOINTS
+// ------------------------------------
+
+app.get("/api/users", requireAuth, requirePermission("user_management", "view"), async (req, res) => {
+    try {
+        const { q, role, status } = req.query;
+
+        let query = `
             SELECT
                 u.id,
                 u.username,
+                u.email,
+                u.full_name,
                 u.role,
-                u.created_at,
+                u.status,
                 u.is_banned,
+                u.created_at,
+                u.permissions_updated_at,
                 COALESCE(s.session_count, 0)::int AS session_count,
                 s.last_login_at,
                 s.last_seen_at,
-                COALESCE(s.last_seen_at > NOW() - INTERVAL '5 minutes', false) AS is_online
+                COALESCE(s.last_seen_at > NOW() - INTERVAL '5 minutes', false) AS is_online,
+                COALESCE(p.perm_count, 0)::int AS permissions_count
             FROM users u
             LEFT JOIN (
                 SELECT user_id,
@@ -375,24 +432,63 @@ app.get("/api/users", requireAuth, requireSuperAdminFresh, async (req, res) => {
                 WHERE logged_in_at > NOW() - INTERVAL '8 hours'
                 GROUP BY user_id
             ) s ON s.user_id = u.id
-            ORDER BY u.id ASC
-        `);
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS perm_count
+                FROM user_permissions
+                WHERE is_allowed = TRUE
+                GROUP BY user_id
+            ) p ON p.user_id = u.id
+            WHERE 1 = 1
+        `;
+
+        const values = [];
+        let pIndex = 1;
+
+        if (q && q.trim()) {
+            query += ` AND (u.username ILIKE $${pIndex} OR u.email ILIKE $${pIndex} OR u.full_name ILIKE $${pIndex})`;
+            values.push(`%${q.trim()}%`);
+            pIndex++;
+        }
+
+        if (role && role !== "all") {
+            query += ` AND u.role = $${pIndex}`;
+            values.push(role);
+            pIndex++;
+        }
+
+        if (status && status !== "all") {
+            if (status === "banned" || status === "suspended") {
+                query += ` AND (u.status = 'suspended' OR u.is_banned = TRUE)`;
+            } else if (status === "active") {
+                query += ` AND (u.status = 'active' AND u.is_banned = FALSE)`;
+            } else if (status === "inactive") {
+                query += ` AND u.status = 'inactive'`;
+            }
+        }
+
+        query += ` ORDER BY u.id ASC`;
+
+        const result = await pool.query(query, values);
 
         const users = result.rows.map((row) => ({
             id: row.id,
             username: row.username,
+            email: row.email,
+            full_name: row.full_name,
             role: row.role,
-            created_at: row.created_at,
+            status: row.status || (row.is_banned ? "suspended" : "active"),
             is_banned: row.is_banned,
             is_online: row.is_online,
             session_count: row.session_count,
             last_login_at: row.last_login_at,
             last_seen_at: row.last_seen_at,
-            }));
+            created_at: row.created_at,
+            permissions_count: row.role === "superadmin" ? "All (Super Admin)" : row.permissions_count
+        }));
 
         res.json({
             users,
-            meta: { today: new Date().toISOString().slice(0,10) }
+            meta: { total: users.length, queryDate: new Date().toISOString() }
         });
     } catch (error) {
         console.error("List users error:", error);
@@ -400,201 +496,583 @@ app.get("/api/users", requireAuth, requireSuperAdminFresh, async (req, res) => {
     }
 });
 
-
-app.post("/api/users", requireAuth, requireSuperAdminFresh, async (req, res) => {
+app.post("/api/users", requireAuth, requirePermission("user_management", "create"), async (req, res) => {
     try {
         const username = String(req.body.username || "").trim();
+        const email = req.body.email ? String(req.body.email).trim() : null;
+        const fullName = req.body.full_name ? String(req.body.full_name).trim() : null;
         const password = String(req.body.password || "");
         const role = ["admin", "user", "superadmin"].includes(req.body.role) ? req.body.role : "user";
+        const status = ["active", "inactive", "suspended"].includes(req.body.status) ? req.body.status : "active";
+        const permissions = req.body.permissions; // Optional map or list of permissions
 
-        if (!username || !password) return res.status(400).json({ message: "Username and password are required" });
-        if (username.length < 3 || username.length > 100) return res.status(400).json({ message: "Username must be between 3 and 100 characters" });
-        if (password.length < 12 || password.length > 128) return res.status(400).json({ message: "Password must be between 12 and 128 characters" });
+        if (role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only an existing Super Admin can create another Super Admin account." });
+        }
 
+        if (!username || !password) {
+            return res.status(400).json({ message: "Username and password are required" });
+        }
+        if (username.length < 3 || username.length > 100) {
+            return res.status(400).json({ message: "Username must be between 3 and 100 characters" });
+        }
+        if (password.length < 12 || password.length > 128) {
+            return res.status(400).json({ message: "Password must be at least 12 characters long" });
+        }
+
+        const isBanned = status === "suspended";
         const hash = await hashPassword(password);
-        const result = await pool.query(
-            `INSERT INTO users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id, username, role, created_at`,
-            [username, hash, role]
-        );
-        const created = result.rows[0];
-        res.status(201).json({ message: `User "${username}" created.`, user: { ...publicUser(created), created_at: created.created_at } });
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            const insertRes = await client.query(
+                `INSERT INTO users (username, email, full_name, password_hash, role, status, is_banned)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING id, username, email, full_name, role, status, is_banned, created_at`,
+                [username, email, fullName, hash, role, status, isBanned]
+            );
+            const created = insertRes.rows[0];
+
+            // If permissions provided for this user, insert them
+            if (permissions && typeof permissions === "object" && role !== "superadmin") {
+                for (const [moduleKey, actions] of Object.entries(permissions)) {
+                    if (typeof actions === "object") {
+                        for (const [actionName, allowed] of Object.entries(actions)) {
+                            if (allowed) {
+                                await client.query(
+                                    `INSERT INTO user_permissions (user_id, module, action, is_allowed, granted_by)
+                                     VALUES ($1, $2, $3, TRUE, $4)
+                                     ON CONFLICT (user_id, module, action) DO NOTHING`,
+                                    [created.id, moduleKey, actionName, req.user.id]
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
+            await client.query("COMMIT");
+
+            await logAuditEvent({
+                actorId: req.user.id,
+                actorUsername: req.user.username,
+                action: "USER_CREATED",
+                targetType: "user",
+                targetId: created.id,
+                details: { username: created.username, role: created.role, status: created.status },
+                ipAddress: req.ip
+            });
+
+            res.status(201).json({
+                message: `Account "${username}" provisioned successfully.`,
+                user: publicUser(created)
+            });
+        } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+        } finally {
+            client.release();
+        }
     } catch (error) {
         console.error("Create user error:", error);
-        if (error.code === "23505") return res.status(409).json({ message: "Username already exists" });
+        if (error.code === "23505") {
+            return res.status(409).json({ message: "A user with this username or email already exists" });
+        }
         res.status(500).json({ message: "Failed to create user" });
     }
 });
 
-app.patch("/api/users/:id/password", requireAuth, requireSuperAdminFresh, async (req, res) => {
+app.patch("/api/users/:id", requireAuth, requirePermission("user_management", "edit"), async (req, res) => {
+    try {
+        const id = parseUserId(req.params.id);
+        if (!id) return res.status(400).json({ message: "Invalid user ID" });
+
+        const targetRes = await pool.query("SELECT id, username, role, status, is_banned FROM users WHERE id = $1", [id]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ message: "User not found" });
+
+        // Non-superadmin cannot edit a superadmin
+        if (target.role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can modify a Super Admin account." });
+        }
+
+        const email = req.body.email !== undefined ? (req.body.email ? String(req.body.email).trim() : null) : undefined;
+        const fullName = req.body.full_name !== undefined ? (req.body.full_name ? String(req.body.full_name).trim() : null) : undefined;
+        const requestedRole = req.body.role;
+        const requestedStatus = req.body.status;
+
+        // Privilege escalation check
+        if (requestedRole === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "You cannot promote an account to Super Admin." });
+        }
+
+        if (id === req.user.id && requestedRole && requestedRole !== req.user.role) {
+            return res.status(400).json({ message: "You cannot modify your own role." });
+        }
+        if (id === req.user.id && requestedStatus && requestedStatus !== "active") {
+            return res.status(400).json({ message: "You cannot deactivate or suspend your own account." });
+        }
+
+        const updates = [];
+        const values = [];
+        let pIdx = 1;
+
+        if (email !== undefined) {
+            updates.push(`email = $${pIdx}`);
+            values.push(email);
+            pIdx++;
+        }
+        if (fullName !== undefined) {
+            updates.push(`full_name = $${pIdx}`);
+            values.push(fullName);
+            pIdx++;
+        }
+        if (requestedRole && ["admin", "user", "superadmin"].includes(requestedRole)) {
+            updates.push(`role = $${pIdx}`);
+            values.push(requestedRole);
+            pIdx++;
+        }
+        if (requestedStatus && ["active", "inactive", "suspended"].includes(requestedStatus)) {
+            updates.push(`status = $${pIdx}`);
+            values.push(requestedStatus);
+            pIdx++;
+            updates.push(`is_banned = $${pIdx}`);
+            values.push(requestedStatus === "suspended");
+            pIdx++;
+        }
+
+        if (updates.length === 0) {
+            return res.json({ message: "No changes specified", user: publicUser(target) });
+        }
+
+        values.push(id);
+        const updateQuery = `UPDATE users SET ${updates.join(", ")}, permissions_updated_at = NOW() WHERE id = $${pIdx} RETURNING id, username, email, full_name, role, status, is_banned, created_at`;
+
+        const updateRes = await pool.query(updateQuery, values);
+        const updated = updateRes.rows[0];
+
+        // If deactivated or suspended, kill all remote active sessions immediately
+        if (updated.status !== "active") {
+            await pool.query("DELETE FROM active_sessions WHERE user_id = $1", [id]);
+        }
+
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "USER_UPDATED",
+            targetType: "user",
+            targetId: id,
+            details: { previous: target, updated: publicUser(updated) },
+            ipAddress: req.ip
+        });
+
+        res.json({ message: "User updated successfully", user: publicUser(updated) });
+    } catch (error) {
+        console.error("Update user error:", error);
+        res.status(500).json({ message: "Failed to update user profile" });
+    }
+});
+
+app.patch("/api/users/:id/password", requireAuth, requirePermission("user_management", "edit"), async (req, res) => {
     try {
         const id = parseUserId(req.params.id);
         const password = String(req.body.password || "");
 
-        if (!id) {
-            return res.status(400).json({ message: "Invalid user ID" });
+        if (!id) return res.status(400).json({ message: "Invalid user ID" });
+        if (password.length < 12 || password.length > 128) {
+            return res.status(400).json({ message: "Password must be at least 12 characters long" });
         }
 
-        if (password.length < 12 || password.length > 128) {
-            return res.status(400).json({
-                message: "Password must be between 12 and 128 characters"
-            });
+        const targetRes = await pool.query("SELECT id, username, role FROM users WHERE id = $1", [id]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ message: "User not found" });
+
+        if (target.role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can reset a Super Admin's password." });
         }
 
         const hash = await hashPassword(password);
+        await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, id]);
 
-        const result = await pool.query(
-            "UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id, username, role",
-            [hash, id]
-        );
-
-        if (!result.rows[0]) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        // A password reset signs the user out everywhere (except the admin
-        // resetting their own password from this session).
+        // Terminate existing sessions to enforce re-authentication with new password
         if (id === req.user.id) {
-            await pool.query(
-                "DELETE FROM active_sessions WHERE user_id = $1 AND token_hash <> $2",
-                [id, req.tokenHash]
-            );
+            await pool.query("DELETE FROM active_sessions WHERE user_id = $1 AND token_hash <> $2", [id, req.tokenHash]);
         } else {
             await pool.query("DELETE FROM active_sessions WHERE user_id = $1", [id]);
         }
 
-        res.json({
-            message: "Password updated successfully",
-            user: result.rows[0]
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "PASSWORD_RESET",
+            targetType: "user",
+            targetId: id,
+            details: { username: target.username },
+            ipAddress: req.ip
         });
+
+        res.json({ message: `Password reset successfully for account "${target.username}". Remote sessions invalidated.` });
     } catch (error) {
         console.error("Reset password error:", error);
         res.status(500).json({ message: "Failed to reset password" });
     }
 });
 
-
-app.delete("/api/users/:id", requireAuth, requireSuperAdminFresh, async (req, res) => {
+app.patch("/api/users/:id/status", requireAuth, requirePermission("user_management", "manage_status"), async (req, res) => {
     try {
         const id = parseUserId(req.params.id);
+        const newStatus = String(req.body.status || "").toLowerCase();
 
-        if (!id) {
-            return res.status(400).json({ message: "Invalid user ID" });
+        if (!id) return res.status(400).json({ message: "Invalid user ID" });
+        if (!["active", "inactive", "suspended"].includes(newStatus)) {
+            return res.status(400).json({ message: "Status must be 'active', 'inactive', or 'suspended'" });
         }
 
         if (id === req.user.id) {
-            return res.status(400).json({
-                message: "You cannot delete your own account"
-            });
+            return res.status(400).json({ message: "You cannot change your own account status." });
         }
 
-        const result = await pool.query(
-            "DELETE FROM users WHERE id = $1 RETURNING id, username",
-            [id]
+        const targetRes = await pool.query("SELECT id, username, role, status FROM users WHERE id = $1", [id]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ message: "User not found" });
+
+        if (target.role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can change a Super Admin's account status." });
+        }
+
+        const isBanned = newStatus === "suspended";
+        await pool.query(
+            "UPDATE users SET status = $1, is_banned = $2 WHERE id = $3",
+            [newStatus, isBanned, id]
         );
 
-        if (!result.rows[0]) {
-            return res.status(404).json({ message: "User not found" });
+        if (newStatus !== "active") {
+            await pool.query("DELETE FROM active_sessions WHERE user_id = $1", [id]);
         }
 
-        res.json({
-            message: "User deleted successfully"
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "STATUS_CHANGED",
+            targetType: "user",
+            targetId: id,
+            details: { previousStatus: target.status, newStatus },
+            ipAddress: req.ip
         });
+
+        res.json({
+            message: `Account status updated to '${newStatus}' for ${target.username}.`,
+            status: newStatus
+        });
+    } catch (error) {
+        console.error("Status update error:", error);
+        res.status(500).json({ message: "Failed to update account status" });
+    }
+});
+
+app.delete("/api/users/:id", requireAuth, requirePermission("user_management", "delete"), async (req, res) => {
+    try {
+        const id = parseUserId(req.params.id);
+        if (!id) return res.status(400).json({ message: "Invalid user ID" });
+
+        if (id === req.user.id) {
+            return res.status(400).json({ message: "You cannot delete your own account" });
+        }
+
+        const targetRes = await pool.query("SELECT id, username, role FROM users WHERE id = $1", [id]);
+        const target = targetRes.rows[0];
+        if (!target) return res.status(404).json({ message: "User not found" });
+
+        if (target.role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can delete a Super Admin account." });
+        }
+
+        await pool.query("DELETE FROM users WHERE id = $1", [id]);
+
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "USER_DELETED",
+            targetType: "user",
+            targetId: id,
+            details: { username: target.username, role: target.role },
+            ipAddress: req.ip
+        });
+
+        res.json({ message: `Account "${target.username}" has been permanently removed.` });
     } catch (error) {
         console.error("Delete user error:", error);
         res.status(500).json({ message: "Failed to delete user" });
     }
 });
 
-
-// ------------------------------------
-// USER BAN / FORCE LOGOUT (ADMIN ONLY)
-// ------------------------------------
-
-app.patch("/api/users/:id/ban", requireAuth, requireSuperAdminFresh, async (req, res) => {
+app.post("/api/users/:id/logout", requireAuth, requirePermission("user_management", "manage_status"), async (req, res) => {
     try {
         const id = parseUserId(req.params.id);
-        const isBanned = req.body.is_banned === true;
-
-        if (!id) {
-            return res.status(400).json({ message: "Invalid user ID" });
-        }
+        if (!id) return res.status(400).json({ message: "Invalid user ID" });
 
         if (id === req.user.id) {
-            return res.status(400).json({
-                message: "You cannot ban/unban your own account"
-            });
+            return res.status(400).json({ message: "Use the Sign Out button to terminate your current session." });
         }
 
-        const result = await pool.query(
-            "UPDATE users SET is_banned = $1 WHERE id = $2 RETURNING id, username, is_banned",
-            [isBanned, id]
-        );
+        const exists = await pool.query("SELECT id, username FROM users WHERE id = $1", [id]);
+        if (!exists.rows[0]) return res.status(404).json({ message: "User not found" });
 
-        if (!result.rows[0]) {
-            return res.status(404).json({ message: "User not found" });
-        }
+        const result = await pool.query("DELETE FROM active_sessions WHERE user_id = $1", [id]);
 
-        // If banning, terminate all active sessions
-        if (isBanned) {
-            await pool.query(
-                "DELETE FROM active_sessions WHERE user_id = $1",
-                [id]
-            );
-        }
-
-        res.json({
-            message: isBanned ? "User banned successfully" : "User unbanned successfully",
-            user: result.rows[0]
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "SESSIONS_TERMINATED",
+            targetType: "user",
+            targetId: id,
+            details: { sessionsCount: result.rowCount },
+            ipAddress: req.ip
         });
-    } catch (error) {
-        console.error("Ban user error:", error);
-        res.status(500).json({ message: "Failed to update ban status" });
-    }
-});
-
-app.post("/api/users/:id/logout", requireAuth, requireSuperAdminFresh, async (req, res) => {
-    try {
-        const id = parseUserId(req.params.id);
-
-        if (!id) {
-            return res.status(400).json({ message: "Invalid user ID" });
-        }
-
-        if (id === req.user.id) {
-            return res.status(400).json({
-                message: "Use the Logout button to sign yourself out"
-            });
-        }
-
-        const exists = await pool.query("SELECT id FROM users WHERE id = $1", [id]);
-        if (!exists.rows[0]) {
-            return res.status(404).json({ message: "User not found" });
-        }
-
-        // Deleting the session rows is what signs the user out: requireAuth
-        // rejects any token that no longer has a matching session.
-        const result = await pool.query(
-            "DELETE FROM active_sessions WHERE user_id = $1",
-            [id]
-        );
 
         res.json({
-            message: "User logged out successfully",
+            message: `Remote sessions successfully terminated for ${exists.rows[0].username}.`,
             sessions_terminated: result.rowCount
         });
     } catch (error) {
-        console.error("Logout user error:", error);
-        res.status(500).json({ message: "Failed to logout user" });
+        console.error("Terminate sessions error:", error);
+        res.status(500).json({ message: "Failed to terminate remote sessions" });
     }
 });
 
-
 // ------------------------------------
-// ------------------------------------
-// RECORD APIs - LOGIN REQUIRED
+// FEATURE PERMISSION MANAGEMENT
 // ------------------------------------
 
-app.get("/api/data", requireAuth, async (req, res) => {
+app.get("/api/permissions/:userId", requireAuth, requirePermission("permission_management", "view"), async (req, res) => {
+    try {
+        const userId = parseUserId(req.params.userId);
+        if (!userId) return res.status(400).json({ message: "Invalid user ID" });
+
+        const userRes = await pool.query("SELECT id, username, role FROM users WHERE id = $1", [userId]);
+        const targetUser = userRes.rows[0];
+        if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+        const permissions = await getUserPermissions(userId, targetUser.role);
+
+        res.json({
+            user: { id: targetUser.id, username: targetUser.username, role: targetUser.role },
+            permissions
+        });
+    } catch (error) {
+        console.error("Get user permissions error:", error);
+        res.status(500).json({ message: "Failed to load permissions" });
+    }
+});
+
+app.put("/api/permissions/:userId", requireAuth, requirePermission("permission_management", "edit"), async (req, res) => {
+    try {
+        const userId = parseUserId(req.params.userId);
+        if (!userId) return res.status(400).json({ message: "Invalid user ID" });
+
+        const targetRes = await pool.query("SELECT id, username, role FROM users WHERE id = $1", [userId]);
+        const targetUser = targetRes.rows[0];
+        if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+        if (targetUser.role === "superadmin") {
+            return res.status(400).json({ message: "Super Admin accounts have full universal permissions and cannot have permissions restricted." });
+        }
+
+        const requestedPermissions = req.body.permissions || {};
+
+        // Security check: non-superadmins cannot grant permissions they don't possess
+        if (req.user.role !== "superadmin") {
+            const myPermissions = await getUserPermissions(req.user.id, req.user.role);
+            for (const [mod, actions] of Object.entries(requestedPermissions)) {
+                for (const [act, allowed] of Object.entries(actions || {})) {
+                    if (allowed && (!myPermissions[mod] || !myPermissions[mod][act])) {
+                        return res.status(403).json({
+                            message: `Privilege escalation blocked: You cannot grant '${mod}:${act}' because you do not possess this permission yourself.`
+                        });
+                    }
+                }
+            }
+        }
+
+        const client = await pool.connect();
+        try {
+            await client.query("BEGIN");
+
+            // Clear previous assigned permissions
+            await client.query("DELETE FROM user_permissions WHERE user_id = $1", [userId]);
+
+            let grantedCount = 0;
+            for (const [modKey, actions] of Object.entries(requestedPermissions)) {
+                if (typeof actions === "object" && actions !== null) {
+                    for (const [actName, isAllowed] of Object.entries(actions)) {
+                        if (isAllowed === true) {
+                            await client.query(
+                                `INSERT INTO user_permissions (user_id, module, action, is_allowed, granted_by)
+                                 VALUES ($1, $2, $3, TRUE, $4)
+                                 ON CONFLICT (user_id, module, action) DO UPDATE SET is_allowed = TRUE, granted_at = NOW()`,
+                                [userId, modKey, actName, req.user.id]
+                            );
+                            grantedCount++;
+                        }
+                    }
+                }
+            }
+
+            await client.query("UPDATE users SET permissions_updated_at = NOW() WHERE id = $1", [userId]);
+            await client.query("COMMIT");
+
+            await logAuditEvent({
+                actorId: req.user.id,
+                actorUsername: req.user.username,
+                action: "PERMISSIONS_UPDATED",
+                targetType: "user",
+                targetId: userId,
+                details: { targetUsername: targetUser.username, grantedCount },
+                ipAddress: req.ip
+            });
+
+            const freshPermissions = await getUserPermissions(userId, targetUser.role);
+
+            res.json({
+                message: `Permissions updated successfully for ${targetUser.username} (${grantedCount} operations granted).`,
+                permissions: freshPermissions
+            });
+        } catch (err) {
+            await client.query("ROLLBACK");
+            throw err;
+        } finally {
+            client.release();
+        }
+    } catch (error) {
+        console.error("Save permissions error:", error);
+        res.status(500).json({ message: "Failed to update permissions" });
+    }
+});
+
+// ------------------------------------
+// AUDIT LOGS & METRICS
+// ------------------------------------
+
+app.get("/api/audit-logs", requireAuth, requirePermission("audit_logs", "view"), async (req, res) => {
+    try {
+        const rawLimit = Number(req.query.limit) || 50;
+        const limit = Math.min(Math.max(1, rawLimit), 200);
+        const { action, actor, target } = req.query;
+
+        let query = `
+            SELECT id, actor_id, actor_username, action, target_type, target_id, details, ip_address, created_at
+            FROM audit_logs
+            WHERE 1 = 1
+        `;
+        const values = [];
+        let pIndex = 1;
+
+        if (action && action.trim()) {
+            query += ` AND action ILIKE $${pIndex}`;
+            values.push(`%${action.trim()}%`);
+            pIndex++;
+        }
+        if (actor && actor.trim()) {
+            query += ` AND actor_username ILIKE $${pIndex}`;
+            values.push(`%${actor.trim()}%`);
+            pIndex++;
+        }
+        if (target && target.trim()) {
+            query += ` AND (target_type ILIKE $${pIndex} OR target_id ILIKE $${pIndex})`;
+            values.push(`%${target.trim()}%`);
+            pIndex++;
+        }
+
+        query += ` ORDER BY created_at DESC LIMIT $${pIndex}`;
+        values.push(limit);
+
+        const result = await pool.query(query, values);
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Get audit logs error:", error);
+        res.status(500).json({ message: "Failed to load audit logs" });
+    }
+});
+
+app.get("/api/admin/metrics", requireAuth, async (req, res) => {
+    try {
+        const userStats = await pool.query(`
+            SELECT
+                COUNT(*)::int AS total_users,
+                COUNT(*) FILTER (WHERE status = 'active' AND is_banned = FALSE)::int AS active_users,
+                COUNT(*) FILTER (WHERE status = 'inactive' OR is_banned = TRUE)::int AS inactive_users,
+                COUNT(*) FILTER (WHERE role = 'admin')::int AS admins,
+                COUNT(*) FILTER (WHERE role = 'superadmin')::int AS superadmins,
+                COUNT(*) FILTER (WHERE role = 'user')::int AS operators
+            FROM users
+        `);
+
+        const onlineStats = await pool.query(`
+            SELECT COUNT(DISTINCT user_id)::int AS online_users
+            FROM active_sessions
+            WHERE last_activity_at > NOW() - INTERVAL '5 minutes'
+        `);
+
+        const recordsStats = await pool.query("SELECT COUNT(*)::int AS total_records FROM records");
+        const auditStats = await pool.query("SELECT COUNT(*)::int AS total_audit_events FROM audit_logs");
+        const pendingReset = await pool.query("SELECT COUNT(*)::int AS pending_resets FROM password_reset_requests WHERE status = 'pending'");
+
+        res.json({
+            users: {
+                ...userStats.rows[0],
+                online_users: onlineStats.rows[0].online_users
+            },
+            total_records: recordsStats.rows[0].total_records,
+            total_audit_events: auditStats.rows[0].total_audit_events,
+            pending_resets: pendingReset.rows[0].pending_resets
+        });
+    } catch (error) {
+        console.error("Admin metrics error:", error);
+        res.status(500).json({ message: "Failed to load admin metrics" });
+    }
+});
+
+app.get("/api/admin/password-requests", requireAuth, requirePermission("user_management", "edit"), async (_req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT pr.id, pr.username_or_email, pr.user_id, pr.requested_at, pr.status, pr.notes, pr.ip_address,
+                   u.username, u.role
+            FROM password_reset_requests pr
+            LEFT JOIN users u ON u.id = pr.user_id
+            WHERE pr.status = 'pending'
+            ORDER BY pr.requested_at DESC
+            LIMIT 50
+        `);
+        res.json(result.rows);
+    } catch (error) {
+        console.error("Get password requests error:", error);
+        res.status(500).json({ message: "Failed to load password requests" });
+    }
+});
+
+app.patch("/api/admin/password-requests/:id", requireAuth, requirePermission("user_management", "edit"), async (req, res) => {
+    try {
+        const id = Number(req.params.id);
+        const status = req.body.status === "dismissed" ? "dismissed" : "resolved";
+
+        await pool.query(
+            "UPDATE password_reset_requests SET status = $1 WHERE id = $2",
+            [status, id]
+        );
+        res.json({ message: `Password request marked as ${status}` });
+    } catch (error) {
+        console.error("Update password request error:", error);
+        res.status(500).json({ message: "Failed to update request" });
+    }
+});
+
+// ------------------------------------
+// RECORD APIs - GRANULAR PERMISSIONS ENFORCED
+// ------------------------------------
+
+app.get("/api/data", requireAuth, requirePermission("records", "view"), async (req, res) => {
     try {
         const rawLimit = req.query.limit;
         const limit = rawLimit ? Math.min(Math.max(1, parseInt(rawLimit, 10) || 50), 500) : 50;
@@ -606,30 +1084,19 @@ app.get("/api/data", requireAuth, async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error("Error fetching records:", error);
-
-        res.status(500).json({
-            message: "Failed to fetch records"
-        });
+        res.status(500).json({ message: "Failed to fetch records" });
     }
 });
 
-
-app.get("/api/data/search", requireAuth, async (req, res) => {
+app.get("/api/data/search", requireAuth, requirePermission("records", "search"), async (req, res) => {
     try {
         const { heading, uid, customer_name, record_date } = req.query;
 
         if (!heading && !uid && !customer_name && !record_date) {
-            return res.status(400).json({
-                message: "Please provide at least one search field"
-            });
+            return res.status(400).json({ message: "Please provide at least one search field" });
         }
 
-        let query = `
-            SELECT *
-            FROM records
-            WHERE 1 = 1
-        `;
-
+        let query = "SELECT * FROM records WHERE 1 = 1";
         const values = [];
         let paramIndex = 1;
 
@@ -657,24 +1124,17 @@ app.get("/api/data/search", requireAuth, async (req, res) => {
             paramIndex++;
         }
 
-        query += `
-            ORDER BY record_date DESC, record_time DESC
-        `;
+        query += " ORDER BY record_date DESC, record_time DESC";
 
         const result = await pool.query(query, values);
-
         res.json(result.rows);
     } catch (error) {
         console.error("Error searching records:", error);
-
-        res.status(500).json({
-            message: "Failed to search records"
-        });
+        res.status(500).json({ message: "Failed to search records" });
     }
 });
 
-
-app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
+app.get("/api/data/last-7-days", requireAuth, requirePermission("shift_analytics", "view"), async (_req, res) => {
     try {
         const result = await pool.query(`
             WITH settings AS (
@@ -736,14 +1196,11 @@ app.get("/api/data/last-7-days", requireAuth, async (req, res) => {
         res.json(result.rows);
     } catch (error) {
         console.error("Error fetching last 7 days summary:", error);
-        res.status(500).json({
-            message: "Failed to fetch last 7 days summary"
-        });
+        res.status(500).json({ message: "Failed to fetch last 7 days summary" });
     }
 });
 
-
-app.get("/api/data/date-summary", requireAuth, async (req, res) => {
+app.get("/api/data/date-summary", requireAuth, requirePermission("shift_analytics", "view"), async (req, res) => {
     try {
         const requestedDate = String(req.query.date || "").trim();
         if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
@@ -786,7 +1243,7 @@ app.get("/api/data/date-summary", requireAuth, async (req, res) => {
     }
 });
 
-app.patch("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
+app.patch("/api/data", requireAuth, requirePermission("records", "edit"), async (req, res) => {
     try {
         const { original_heading, original_customer_name, original_uid, ...record } = req.body || {};
 
@@ -804,8 +1261,6 @@ app.patch("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
             return res.status(400).json({ message: "Heading, Customer Name and UID are required" });
         }
 
-        // First find the exact record being edited. This lets us distinguish
-        // "editing the same record" from "changing it to another record's key".
         const originalResult = await pool.query(
             `SELECT heading, customer_name, uid
              FROM records
@@ -823,24 +1278,14 @@ app.patch("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
         const requestedCustomer = String(customer_name).trim();
         const requestedUid = String(uid).trim();
 
-        // If the user did not actually change the three key fields (ignoring
-        // case), preserve the database values exactly. This prevents a simple
-        // edit such as changing Loc-1 from turning "Sg" into "SG" and hitting
-        // an existing unique-key row.
         const sameLogicalKey =
             requestedHeading.toUpperCase() === String(originalRow.heading).toUpperCase() &&
             requestedCustomer.toUpperCase() === String(originalRow.customer_name).toUpperCase() &&
             requestedUid.toUpperCase() === String(originalRow.uid).toUpperCase();
 
-        const nextHeading = sameLogicalKey
-            ? originalRow.heading
-            : requestedHeading.toUpperCase();
-        const nextCustomer = sameLogicalKey
-            ? originalRow.customer_name
-            : requestedCustomer.toUpperCase();
-        const nextUid = sameLogicalKey
-            ? originalRow.uid
-            : requestedUid.toUpperCase();
+        const nextHeading = sameLogicalKey ? originalRow.heading : requestedHeading.toUpperCase();
+        const nextCustomer = sameLogicalKey ? originalRow.customer_name : requestedCustomer.toUpperCase();
+        const nextUid = sameLogicalKey ? originalRow.uid : requestedUid.toUpperCase();
 
         const result = await pool.query(
             `UPDATE records SET
@@ -862,6 +1307,16 @@ app.patch("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
             return res.status(404).json({ message: "Record not found" });
         }
 
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "RECORD_EDITED",
+            targetType: "record",
+            targetId: `${nextHeading}|${nextCustomer}|${nextUid}`,
+            details: { heading: nextHeading, customer: nextCustomer, uid: nextUid },
+            ipAddress: req.ip
+        });
+
         res.json({ message: "Record updated successfully", data: result.rows[0] });
     } catch (error) {
         console.error("Error updating record:", error);
@@ -872,7 +1327,7 @@ app.patch("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
     }
 });
 
-app.delete("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
+app.delete("/api/data", requireAuth, requirePermission("records", "delete"), async (req, res) => {
     try {
         const { heading, customer_name, uid } = req.body || {};
         if (!heading || !customer_name || !uid) {
@@ -888,6 +1343,16 @@ app.delete("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
             return res.status(404).json({ message: "Record not found" });
         }
 
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "RECORD_DELETED",
+            targetType: "record",
+            targetId: `${heading}|${customer_name}|${uid}`,
+            details: { heading, customer_name, uid },
+            ipAddress: req.ip
+        });
+
         res.json({ message: "Record deleted successfully", data: result.rows[0] });
     } catch (error) {
         console.error("Error deleting record:", error);
@@ -895,44 +1360,16 @@ app.delete("/api/data", requireAuth, requireAdminFresh, async (req, res) => {
     }
 });
 
-app.post("/api/data", requireAuth, async (req, res) => {
+app.post("/api/data", requireAuth, requirePermission("records", "create"), async (req, res) => {
     try {
         const {
-            uid,
-            heading,
-            customer_name,
-            record_date,
-            record_time,
-            loc1,
-            loc2,
-            loc3,
-            loc4,
-            loc5,
-            loc6,
-            loc7,
-            loc8,
-            loc9,
-            loc10,
-            loc11,
-            loc12
+            uid, heading, customer_name, record_date, record_time,
+            loc1, loc2, loc3, loc4, loc5, loc6,
+            loc7, loc8, loc9, loc10, loc11, loc12
         } = req.body;
 
-        if (!uid) {
-            return res.status(400).json({
-                message: "UID is required"
-            });
-        }
-
-        if (!heading) {
-            return res.status(400).json({
-                message: "Heading is required"
-            });
-        }
-
-        if (!customer_name) {
-            return res.status(400).json({
-                message: "Customer name is required"
-            });
+        if (!uid || !heading || !customer_name) {
+            return res.status(400).json({ message: "UID, Heading, and Customer name are required" });
         }
 
         const headingUpper = heading.trim().toUpperCase();
@@ -941,23 +1378,9 @@ app.post("/api/data", requireAuth, async (req, res) => {
 
         const query = `
             INSERT INTO records (
-                heading,
-                customer_name,
-                uid,
-                record_date,
-                record_time,
-                loc1,
-                loc2,
-                loc3,
-                loc4,
-                loc5,
-                loc6,
-                loc7,
-                loc8,
-                loc9,
-                loc10,
-                loc11,
-                loc12
+                heading, customer_name, uid, record_date, record_time,
+                loc1, loc2, loc3, loc4, loc5, loc6,
+                loc7, loc8, loc9, loc10, loc11, loc12
             )
             VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9,
@@ -967,36 +1390,29 @@ app.post("/api/data", requireAuth, async (req, res) => {
         `;
 
         const values = [
-            headingUpper,
-            customerUpper,
-            uidUpper,
-            record_date,
-            record_time,
-            loc1,
-            loc2,
-            loc3,
-            loc4,
-            loc5,
-            loc6,
-            loc7,
-            loc8,
-            loc9,
-            loc10,
-            loc11,
-            loc12
+            headingUpper, customerUpper, uidUpper, record_date, record_time,
+            loc1, loc2, loc3, loc4, loc5, loc6,
+            loc7, loc8, loc9, loc10, loc11, loc12
         ];
 
         const result = await pool.query(query, values);
 
-        // Never report success unless PostgreSQL actually inserted a row.
         if (result.rowCount !== 1 || !result.rows[0]) {
             console.error("Record INSERT returned no row.");
-            return res.status(500).json({
-                message: "Record was not saved to the database"
-            });
+            return res.status(500).json({ message: "Record was not saved to the database" });
         }
 
         const savedRecord = result.rows[0];
+
+        await logAuditEvent({
+            actorId: req.user.id,
+            actorUsername: req.user.username,
+            action: "RECORD_CREATED",
+            targetType: "record",
+            targetId: `${headingUpper}|${customerUpper}|${uidUpper}`,
+            details: { heading: headingUpper, customer_name: customerUpper, uid: uidUpper },
+            ipAddress: req.ip
+        });
 
         res.status(201).json({
             message: "Record created successfully",
@@ -1004,30 +1420,28 @@ app.post("/api/data", requireAuth, async (req, res) => {
         });
     } catch (error) {
         console.error("Error creating record:", error);
-
         if (error.code === "23505") {
-            return res.status(409).json({
-                message: "Heading, UID and Customer Name combination already exists"
-            });
+            return res.status(409).json({ message: "Heading, UID and Customer Name combination already exists" });
         }
-
-        res.status(500).json({
-            message: "Failed to create record",
-            error: error.message
-        });
+        res.status(500).json({ message: "Failed to create record", error: error.message });
     }
 });
 
+if (fs.existsSync(distDir)) {
+    app.use((req, res, next) => {
+        if (req.method !== "GET" || req.path.startsWith("/api/")) return next();
+        res.sendFile(path.join(distDir, "index.html"));
+    });
+}
 
 // ------------------------------------
 // ERROR HANDLING
 // ------------------------------------
 
-app.use((error, req, res, next) => {
+app.use((error, _req, res, _next) => {
     if (error?.message?.startsWith("Origin not allowed by CORS:")) {
         return res.status(403).json({ message: "Origin not allowed" });
     }
-
     if (error?.type === "entity.too.large") {
         return res.status(413).json({ message: "Request body is too large" });
     }
@@ -1035,7 +1449,6 @@ app.use((error, req, res, next) => {
     console.error("Unhandled server error:", error);
     return res.status(500).json({ message: "Internal server error" });
 });
-
 
 // ------------------------------------
 // START SERVER
@@ -1046,21 +1459,17 @@ async function startServer() {
         await pool.query("SELECT 1");
         console.log("✅ Database connected successfully");
         await initializeAuthTables();
-        console.log("✅ Authentication tables ready");
-        await ensurePrivilegedUsers();
+        console.log("✅ Authentication & RBAC tables ready");
 
         const PORT = process.env.PORT || 5000;
 
         app.listen(PORT, "0.0.0.0", () => {
-            console.log(`🚀 Server running on http://localhost:${PORT}`);
+            console.log(`🚀 Legion Server running on http://localhost:${PORT}`);
         });
     } catch (error) {
-        console.error("❌ Server startup failed:");
-        console.error(error.message);
+        console.error("❌ Server startup failed:", error.message);
         process.exit(1);
     }
 }
 
 startServer();
-
-

@@ -8,15 +8,12 @@ const rawApiUrl = (
 
 // Ensure clean URL: remove trailing slashes
 let normalizedUrl = rawApiUrl.replace(/\/+$/, "");
-// If the user specified a full URL (like https://legion-backend.onrender.com) without /api, add /api automatically
 if (normalizedUrl.startsWith("http") && !normalizedUrl.endsWith("/api")) {
     normalizedUrl = `${normalizedUrl}/api`;
 }
 
 export const API_URL = normalizedUrl;
 
-// Authentication is intentionally kept only in JavaScript memory.
-// Therefore a full page refresh/reload clears the token and shows Login again.
 let authToken = null;
 
 export const setAuthToken = (token) => {
@@ -29,9 +26,6 @@ export const clearAuthToken = () => {
     authToken = null;
 };
 
-// Called when the server rejects the current session (signed out by an admin,
-// banned or token expired...). AuthContext uses this to
-// return to the login page immediately instead of leaving a broken screen.
 let unauthorizedHandler = null;
 
 export const setUnauthorizedHandler = (handler) => {
@@ -46,7 +40,6 @@ api.interceptors.request.use((config) => {
     if (authToken) {
         config.headers.Authorization = `Bearer ${authToken}`;
     }
-
     return config;
 });
 
@@ -54,10 +47,8 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         const url = error.config?.url || "";
-        const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/logout");
+        const isAuthEndpoint = url.includes("/auth/login") || url.includes("/auth/logout") || url.includes("/auth/forgot-password");
 
-        // Only react once per session: if the token is already cleared, another
-        // request has already ended the session.
         if (error.response?.status === 401 && !isAuthEndpoint && authToken) {
             clearAuthToken();
             unauthorizedHandler?.({
@@ -69,14 +60,19 @@ api.interceptors.response.use(
     }
 );
 
-export const loginRequest = async (username, password) => {
-    const response = await api.post("/auth/login", { username, password });
+// ------------------------------------
+// AUTHENTICATION
+// ------------------------------------
+
+export const loginRequest = async (usernameOrEmail, password) => {
+    const response = await api.post("/auth/login", {
+        username: usernameOrEmail,
+        password
+    });
     return response.data;
 };
 
 export const logoutRequest = async (token) => {
-    // The token is passed explicitly because the in-memory token is cleared
-    // before this request is sent.
     const response = await api.post("/auth/logout", null, {
         headers: token ? { Authorization: `Bearer ${token}` } : undefined,
         timeout: 8000
@@ -86,11 +82,11 @@ export const logoutRequest = async (token) => {
 
 export const getCurrentUser = async () => {
     const response = await api.get("/auth/me");
-    return response.data.user;
+    return response.data; // { user, permissions }
 };
 
-export const getAllRecords = async (limit = 50) => {
-    const response = await api.get("/data", { params: { limit } });
+export const requestPasswordReset = async (username_or_email, notes) => {
+    const response = await api.post("/auth/forgot-password", { username_or_email, notes });
     return response.data;
 };
 
@@ -101,6 +97,15 @@ export const checkHealth = async () => {
     } catch (error) {
         return { ok: false, error };
     }
+};
+
+// ------------------------------------
+// RECORDS
+// ------------------------------------
+
+export const getAllRecords = async (limit = 50) => {
+    const response = await api.get("/data", { params: { limit } });
+    return response.data;
 };
 
 export const getLast7DaysSummary = async () => {
@@ -130,7 +135,6 @@ export const deleteRecord = async ({ heading, customer_name, uid }) => {
     return response.data;
 };
 
-
 export const searchRecords = async ({ heading, customer_name, uid, record_date }) => {
     const response = await api.get("/data/search", {
         params: { heading, customer_name, uid, record_date }
@@ -138,9 +142,12 @@ export const searchRecords = async ({ heading, customer_name, uid, record_date }
     return response.data;
 };
 
-// Returns { users: [...], meta: { today, timezone } }
-export const getUsers = async () => {
-    const response = await api.get("/users");
+// ------------------------------------
+// USER & PERMISSION MANAGEMENT
+// ------------------------------------
+
+export const getUsers = async (params = {}) => {
+    const response = await api.get("/users", { params });
     return response.data;
 };
 
@@ -149,8 +156,18 @@ export const createUser = async (data) => {
     return response.data;
 };
 
+export const updateUser = async (id, data) => {
+    const response = await api.patch(`/users/${id}`, data);
+    return response.data;
+};
+
 export const resetUserPassword = async (id, password) => {
     const response = await api.patch(`/users/${id}/password`, { password });
+    return response.data;
+};
+
+export const updateUserStatus = async (id, status) => {
+    const response = await api.patch(`/users/${id}/status`, { status });
     return response.data;
 };
 
@@ -159,21 +176,56 @@ export const deleteUser = async (id) => {
     return response.data;
 };
 
-export const banUser = async (id, is_banned) => {
-    const response = await api.patch(`/users/${id}/ban`, { is_banned });
-    return response.data;
-};
-
 export const logoutUser = async (id) => {
     const response = await api.post(`/users/${id}/logout`);
     return response.data;
 };
 
+export const getModules = async () => {
+    const response = await api.get("/modules");
+    return response.data;
+};
 
-export const getErrorMessage = (
-    error,
-    fallback = "Something went wrong."
-) => {
+export const getRoles = async () => {
+    const response = await api.get("/roles");
+    return response.data;
+};
+
+export const getUserPermissions = async (userId) => {
+    const response = await api.get(`/permissions/${userId}`);
+    return response.data;
+};
+
+export const saveUserPermissions = async (userId, permissions) => {
+    const response = await api.put(`/permissions/${userId}`, { permissions });
+    return response.data;
+};
+
+// ------------------------------------
+// AUDIT & ADMIN METRICS
+// ------------------------------------
+
+export const getAuditLogs = async (params = {}) => {
+    const response = await api.get("/audit-logs", { params });
+    return response.data;
+};
+
+export const getAdminMetrics = async () => {
+    const response = await api.get("/admin/metrics");
+    return response.data;
+};
+
+export const getPasswordRequests = async () => {
+    const response = await api.get("/admin/password-requests");
+    return response.data;
+};
+
+export const updatePasswordRequest = async (id, status) => {
+    const response = await api.patch(`/admin/password-requests/${id}`, { status });
+    return response.data;
+};
+
+export const getErrorMessage = (error, fallback = "Something went wrong.") => {
     return (
         error?.response?.data?.message ||
         error?.message ||

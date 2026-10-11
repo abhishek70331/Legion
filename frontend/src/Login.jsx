@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { loginRequest } from "./api.js";
+import { loginRequest, requestPasswordReset } from "./api.js";
 import { useAuth } from "./AuthContext.jsx";
+import { useToast } from "./ToastContext.jsx";
 
 function ShieldIcon() {
     return (
@@ -27,14 +28,20 @@ function EyeIcon({ visible }) {
 
 export default function Login() {
     const { login, notice, clearNotice } = useAuth();
-    const [username, setUsername] = useState("");
+    const toast = useToast();
+    const [identifier, setIdentifier] = useState("");
     const [password, setPassword] = useState("");
     const [message, setMessage] = useState("");
     const [loading, setLoading] = useState(false);
     const [showPassword, setShowPassword] = useState(false);
 
-    // Errors from this form win; otherwise show why the previous session ended
-    // (signed out by an admin, etc.).
+    // Forgot password modal state
+    const [forgotModalOpen, setForgotModalOpen] = useState(false);
+    const [forgotIdentifier, setForgotIdentifier] = useState("");
+    const [forgotNotes, setForgotNotes] = useState("");
+    const [forgotSubmitting, setForgotSubmitting] = useState(false);
+    const [forgotStatus, setForgotStatus] = useState({ type: "", text: "" });
+
     const banner = message
         ? { type: "error", text: message }
         : notice
@@ -46,22 +53,64 @@ export default function Login() {
         setMessage("");
         clearNotice();
 
-        if (!username.trim() || !password) {
-            setMessage("Please enter your username and password.");
+        if (!identifier.trim() || !password) {
+            const errText = "Please enter your username or email and password.";
+            setMessage(errText);
+            toast.error("Validation Error", errText);
             return;
         }
 
         setLoading(true);
         try {
-            const result = await loginRequest(username.trim(), password);
-            login(result.token, result.user);
-        } catch (error) {
-            setMessage(
-                error?.response?.data?.message ||
-                "Login failed. Please check your username and password."
+            const result = await loginRequest(identifier.trim(), password);
+            toast.success(
+                "Access Granted",
+                `Signed in as ${result.user.full_name || result.user.username}. Initializing authorized modules.`,
+                result.user.role?.toUpperCase()
             );
+            login(result.token, result.user, result.permissions);
+        } catch (error) {
+            const errText =
+                error?.response?.data?.message ||
+                "Login failed. Please verify your credentials or account status.";
+            setMessage(errText);
+            toast.error("Authentication Failed", errText);
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleForgotSubmit = async (e) => {
+        e.preventDefault();
+        setForgotStatus({ type: "", text: "" });
+
+        if (!forgotIdentifier.trim()) {
+            const errText = "Please enter your username or registered email.";
+            setForgotStatus({ type: "error", text: errText });
+            toast.error("Validation Error", errText);
+            return;
+        }
+
+        setForgotSubmitting(true);
+        try {
+            const res = await requestPasswordReset(forgotIdentifier.trim(), forgotNotes.trim());
+            const successMsg = res.message || "Your password assistance request has been submitted to system administrators.";
+            setForgotStatus({
+                type: "success",
+                text: successMsg
+            });
+            toast.success("Request Submitted", successMsg);
+            setForgotIdentifier("");
+            setForgotNotes("");
+        } catch (error) {
+            const errText = error?.response?.data?.message || "Failed to submit reset request. Please contact your administrator.";
+            setForgotStatus({
+                type: "error",
+                text: errText
+            });
+            toast.error("Request Failed", errText);
+        } finally {
+            setForgotSubmitting(false);
         }
     };
 
@@ -75,28 +124,28 @@ export default function Login() {
                     <div className="brand-mark">
                         <ShieldIcon />
                     </div>
-                    <p className="brand-kicker">LEGION SYSTEM</p>
-                    <h1>Insulator Ultrasonic<br />Testing Data</h1>
+                    <p className="brand-kicker">LEGION CONTROL PLATFORM</p>
+                    <h1>Insulator Ultrasonic<br />Testing Suite</h1>
                     <p className="brand-copy">
-                        Secure access to your inspection records, testing data and operational tools.
+                        Unified industrial access management, inspection records, shift analytics, and role-based permissions.
                     </p>
                     <div className="brand-line" />
                     <div className="brand-meta">
                         <span className="status-dot" />
-                        <span>Secure workspace</span>
+                        <span>Role-Based Secure Workspace</span>
                     </div>
                 </div>
 
                 <div className="login-card">
                     <div className="login-heading">
-                        <p className="login-eyebrow">WELCOME BACK</p>
+                        <p className="login-eyebrow">ENTERPRISE ACCESS</p>
                         <h2>Sign in</h2>
-                        <p>Enter your credentials to continue.</p>
+                        <p>Authenticate with your username or registered email.</p>
                     </div>
 
                     <form onSubmit={handleSubmit}>
                         <label className="login-field">
-                            <span>Username</span>
+                            <span>Username or Email</span>
                             <span className="input-wrap">
                                 <span className="input-icon" aria-hidden="true">
                                     <svg viewBox="0 0 24 24">
@@ -106,17 +155,30 @@ export default function Login() {
                                 </span>
                                 <input
                                     type="text"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
+                                    value={identifier}
+                                    onChange={(e) => setIdentifier(e.target.value)}
                                     autoComplete="username"
                                     autoFocus
-                                    placeholder="Enter your username"
+                                    placeholder="Username or user@legion.com"
                                 />
                             </span>
                         </label>
 
                         <label className="login-field">
-                            <span>Password</span>
+                            <div className="login-field-header">
+                                <span>Password</span>
+                                <button
+                                    type="button"
+                                    className="login-forgot-link"
+                                    onClick={() => {
+                                        setForgotModalOpen(true);
+                                        setForgotStatus({ type: "", text: "" });
+                                        if (identifier) setForgotIdentifier(identifier);
+                                    }}
+                                >
+                                    Forgot password?
+                                </button>
+                            </div>
                             <span className="input-wrap">
                                 <span className="input-icon" aria-hidden="true">
                                     <svg viewBox="0 0 24 24">
@@ -129,7 +191,7 @@ export default function Login() {
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     autoComplete="current-password"
-                                    placeholder="Enter your password"
+                                    placeholder="Enter your secure password"
                                 />
                                 <button
                                     type="button"
@@ -153,7 +215,7 @@ export default function Login() {
                             {loading ? (
                                 <>
                                     <span className="login-spinner" />
-                                    Signing in...
+                                    Authenticating...
                                 </>
                             ) : (
                                 <>Sign in <span className="login-arrow">→</span></>
@@ -163,12 +225,84 @@ export default function Login() {
 
                     <div className="login-footer">
                         <span className="footer-lock">●</span>
-                        <span>Your session is protected</span>
+                        <span>Protected by granular RBAC session policies</span>
                     </div>
                 </div>
             </section>
 
-            <p className="login-copyright">Legion · Insulator Ultrasonic Testing</p>
+            {/* FORGOT PASSWORD ASSISTANCE MODAL */}
+            {forgotModalOpen && (
+                <div className="record-modal-backdrop" onClick={() => !forgotSubmitting && setForgotModalOpen(false)}>
+                    <div className="record-modal login-assist-modal" onClick={(e) => e.stopPropagation()}>
+                        <div className="record-modal-header">
+                            <div>
+                                <span className="section-kicker">CREDENTIAL ASSISTANCE</span>
+                                <h2>Password Reset Request</h2>
+                                <p>Submit a secure reset notification to system administrators.</p>
+                            </div>
+                            <button
+                                type="button"
+                                className="modal-close"
+                                onClick={() => !forgotSubmitting && setForgotModalOpen(false)}
+                            >
+                                ×
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleForgotSubmit}>
+                            <div className="modal-body-content">
+                                <label className="field">
+                                    <span>Username or Registered Email *</span>
+                                    <input
+                                        type="text"
+                                        value={forgotIdentifier}
+                                        onChange={(e) => setForgotIdentifier(e.target.value)}
+                                        placeholder="e.g. operator_shift1 or operator@workstation.com"
+                                        required
+                                    />
+                                </label>
+
+                                <label className="field">
+                                    <span>Workstation or Notes (Optional)</span>
+                                    <textarea
+                                        rows={3}
+                                        value={forgotNotes}
+                                        onChange={(e) => setForgotNotes(e.target.value)}
+                                        placeholder="e.g. Shift 1 Ultrasonic line operator locked out"
+                                    />
+                                </label>
+
+                                {forgotStatus.text && (
+                                    <div className={`um-alert ${forgotStatus.type === "success" ? "um-alert-success" : "um-alert-error"}`}>
+                                        <span className="um-alert-icon">{forgotStatus.type === "success" ? "✓" : "!"}</span>
+                                        <span>{forgotStatus.text}</span>
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="record-modal-actions">
+                                <button
+                                    type="button"
+                                    className="btn btn-secondary"
+                                    onClick={() => setForgotModalOpen(false)}
+                                    disabled={forgotSubmitting}
+                                >
+                                    Close
+                                </button>
+                                <button
+                                    type="submit"
+                                    className="btn btn-primary"
+                                    disabled={forgotSubmitting}
+                                >
+                                    {forgotSubmitting ? "Submitting..." : "Submit Reset Request"}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
+
+            <p className="login-copyright">Legion · Insulator Ultrasonic Testing Operations</p>
         </main>
     );
 }

@@ -1,6 +1,10 @@
-@"
+# Dependencies
 node_modules/
-dist/
+
+# Environment variables
 .env
-.env.local
-"@ | Out-File -Encoding utf8 .gitignore
+.env.*
+!.env.example
+
+# Logs
+*.log
