@@ -92,6 +92,51 @@ if (fs.existsSync(distDir)) {
     app.use(express.static(distDir));
 }
 
+app.get("/", (_req, res) => {
+    const indexPath = path.join(distDir, "index.html");
+    if (fs.existsSync(indexPath)) {
+        return res.sendFile(indexPath);
+    }
+    if (_req.accepts("html")) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legion NDT API - Active</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0b1120; color: #f8fafc; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 1rem; }
+        .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 2.5rem; max-width: 480px; width: 100%; text-align: center; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5); }
+        .badge { display: inline-flex; align-items: center; gap: 8px; background: rgba(16, 185, 129, 0.15); color: #34d399; padding: 6px 14px; border-radius: 9999px; font-weight: 600; font-size: 0.85rem; border: 1px solid rgba(16, 185, 129, 0.3); margin-bottom: 1.25rem; }
+        .dot { width: 8px; height: 8px; background: #10b981; border-radius: 50%; box-shadow: 0 0 8px #10b981; }
+        h1 { margin: 0 0 0.5rem 0; font-size: 1.6rem; color: #fff; font-weight: 700; }
+        p { color: #94a3b8; font-size: 0.95rem; line-height: 1.5; margin: 0 0 1.5rem 0; }
+        .info { background: #0f172a; border-radius: 8px; padding: 0.85rem 1rem; font-family: monospace; font-size: 0.85rem; color: #38bdf8; text-align: left; margin-bottom: 1.5rem; line-height: 1.6; border: 1px solid #1e293b; }
+        .subtext { font-size: 0.85rem; color: #64748b; margin: 0; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="badge"><span class="dot"></span> Backend API Online</div>
+        <h1>Legion NDT Service</h1>
+        <p>The backend application service is operational and connected to the database.</p>
+        <div class="info">
+            <div><strong>Status:</strong> HTTP 200 OK</div>
+            <div><strong>Service:</strong> legion-api</div>
+            <div><strong>Health Check:</strong> <a href="/api/health" style="color: #38bdf8;">/api/health</a></div>
+        </div>
+        <p class="subtext">To use the dashboard, open your Vercel frontend URL.</p>
+    </div>
+</body>
+</html>
+        `);
+    }
+    res.json({ ok: true, service: "legion-api", message: "Legion Ultrasonic Testing API is active" });
+});
+
 app.get(["/health", "/api/health"], (_req, res) => {
     res.json({ ok: true, service: "legion-api" });
 });
