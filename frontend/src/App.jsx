@@ -1284,6 +1284,7 @@ function MainApp() {
                                                         inputMode="decimal"
                                                         value={form[col.key] ?? ""}
                                                         onChange={(e) => handleFormChange(col.key, e.target.value)}
+                                                        onFocus={(e) => e.target.select()}
                                                         placeholder="0.00"
                                                     />
                                                 </label>
