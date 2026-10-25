@@ -20,21 +20,23 @@ if %ERRORLEVEL% neq 0 (
 )
 
 :: 2. Resolve Paths
-set "CURRENT_DIR=%~dp0"
-if exist "%CURRENT_DIR%backend" (
-    set "BACKEND_DIR=%CURRENT_DIR%backend"
-    set "FRONTEND_DIR=%CURRENT_DIR%frontend"
-) else if exist "%CURRENT_DIR%NDT\backend" (
-    set "BACKEND_DIR=%CURRENT_DIR%NDT\backend"
-    set "FRONTEND_DIR=%CURRENT_DIR%NDT\frontend"
-) else if exist "D:\ntd test\legion NTD\NDT\backend" (
-    set "BACKEND_DIR=D:\ntd test\legion NTD\NDT\backend"
-    set "FRONTEND_DIR=D:\ntd test\legion NTD\NDT\frontend"
-) else (
-    color 0C
-    echo [ERROR] Could not locate backend and frontend folders.
-    pause
-    exit /b 1
+set "BACKEND_DIR=D:\ntd test\legion NTD\NDT\backend"
+set "FRONTEND_DIR=D:\ntd test\legion NTD\NDT\frontend"
+
+if not exist "%BACKEND_DIR%" (
+    set "CURRENT_DIR=%~dp0"
+    if exist "%CURRENT_DIR%backend" (
+        set "BACKEND_DIR=%CURRENT_DIR%backend"
+        set "FRONTEND_DIR=%CURRENT_DIR%frontend"
+    ) else if exist "%CURRENT_DIR%NDT\backend" (
+        set "BACKEND_DIR=%CURRENT_DIR%NDT\backend"
+        set "FRONTEND_DIR=%CURRENT_DIR%NDT\frontend"
+    ) else (
+        color 0C
+        echo [ERROR] Could not locate backend and frontend folders.
+        pause
+        exit /b 1
+    )
 )
 
 echo [OK] Located project directories:

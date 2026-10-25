@@ -1300,26 +1300,7 @@ function MainApp() {
                                     </div>
                                 )}
 
-                                <div className="form-action-bar">
-                                    <div className="action-buttons-left">
-                                        <button
-                                            type="button"
-                                            className="btn btn-secondary"
-                                            onClick={handleClearReadings}
-                                            title="Clear all 12 location inputs"
-                                        >
-                                            Clear Readings
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="btn btn-secondary"
-                                            onClick={handleResetForm}
-                                            title="Reset form"
-                                        >
-                                            Reset Form
-                                        </button>
-                                    </div>
-
+                                <div className="form-action-bar" style={{ justifyContent: "flex-end" }}>
                                     <button
                                         type="button"
                                         className="btn btn-primary btn-save-record"
