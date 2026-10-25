@@ -42,16 +42,10 @@ echo      Backend:  "%BACKEND_DIR%"
 echo      Frontend: "%FRONTEND_DIR%"
 echo.
 
-:: 3. Free up ports 5000 and 5173 if already running from previous session
-echo [INFO] Checking for previous instances on ports 5000 and 5173...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do (
-    echo   Releasing port 5000 (PID %%a)...
-    taskkill /F /PID %%a >nul 2>nul
-)
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173" ^| findstr "LISTENING"') do (
-    echo   Releasing port 5173 (PID %%a)...
-    taskkill /F /PID %%a >nul 2>nul
-)
+:: 3. Free up ports 5000 and 5173 if running from previous session
+echo [INFO] Releasing any previous instances on ports 5000 and 5173...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>nul
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>nul
 ping 127.0.0.1 -n 2 >nul
 
 :: 4. Check Backend Dependencies
