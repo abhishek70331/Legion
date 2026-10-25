@@ -8,16 +8,10 @@ echo ======================================================================
 echo.
 
 echo [INFO] Terminating processes on Port 5000 (Backend API)...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do (
-    echo   Stopping PID %%a...
-    taskkill /F /PID %%a >nul 2>nul
-)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>nul
 
 echo [INFO] Terminating processes on Port 5173 (Frontend)...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173" ^| findstr "LISTENING"') do (
-    echo   Stopping PID %%a...
-    taskkill /F /PID %%a >nul 2>nul
-)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>nul
 
 echo.
 echo ======================================================================
