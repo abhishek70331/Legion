@@ -27,6 +27,9 @@ if exist "%CURRENT_DIR%backend" (
 ) else if exist "%CURRENT_DIR%NDT\backend" (
     set "BACKEND_DIR=%CURRENT_DIR%NDT\backend"
     set "FRONTEND_DIR=%CURRENT_DIR%NDT\frontend"
+) else if exist "D:\ntd test\legion NTD\NDT\backend" (
+    set "BACKEND_DIR=D:\ntd test\legion NTD\NDT\backend"
+    set "FRONTEND_DIR=D:\ntd test\legion NTD\NDT\frontend"
 ) else (
     color 0C
     echo [ERROR] Could not locate backend and frontend folders.
@@ -39,7 +42,19 @@ echo      Backend:  "%BACKEND_DIR%"
 echo      Frontend: "%FRONTEND_DIR%"
 echo.
 
-:: 3. Check Backend Dependencies
+:: 3. Free up ports 5000 and 5173 if already running from previous session
+echo [INFO] Checking for previous instances on ports 5000 and 5173...
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5000" ^| findstr "LISTENING"') do (
+    echo   Releasing port 5000 (PID %%a)...
+    taskkill /F /PID %%a >nul 2>nul
+)
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":5173" ^| findstr "LISTENING"') do (
+    echo   Releasing port 5173 (PID %%a)...
+    taskkill /F /PID %%a >nul 2>nul
+)
+ping 127.0.0.1 -n 2 >nul
+
+:: 4. Check Backend Dependencies
 if not exist "%BACKEND_DIR%\node_modules" (
     echo [INFO] Backend node_modules not found. Installing dependencies...
     cd /d "%BACKEND_DIR%"
@@ -52,7 +67,7 @@ if not exist "%BACKEND_DIR%\node_modules" (
     )
 )
 
-:: 4. Check Frontend Dependencies
+:: 5. Check Frontend Dependencies
 if not exist "%FRONTEND_DIR%\node_modules" (
     echo [INFO] Frontend node_modules not found. Installing dependencies...
     cd /d "%FRONTEND_DIR%"
@@ -70,21 +85,21 @@ echo ======================================================================
 echo Starting Legion Services...
 echo ======================================================================
 
-:: 5. Launch Backend Server in new window
+:: 6. Launch Backend Server in new window
 echo [1/2] Launching Backend Server (Port 5000)...
 start "Legion Backend API [Port 5000]" /D "%BACKEND_DIR%" cmd.exe /k "color 0A && npm start"
 
 :: Small delay to let backend bind port
 ping 127.0.0.1 -n 4 >nul
 
-:: 6. Launch Frontend Dev Server in new window
+:: 7. Launch Frontend Dev Server in new window
 echo [2/2] Launching Frontend Interface (Port 5173)...
 start "Legion Frontend [Port 5173]" /D "%FRONTEND_DIR%" cmd.exe /k "color 09 && npm run dev"
 
 :: Small delay before opening browser
 ping 127.0.0.1 -n 4 >nul
 
-:: 7. Open Browser
+:: 8. Open Browser
 echo.
 echo [LAUNCH] Opening Legion Workspace in default browser...
 start http://localhost:5173
