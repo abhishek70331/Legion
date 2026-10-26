@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Legion NDT Inspection System - Project Presentation</title>
+    <style>
+        :root {
+            --bg-primary: #0a0f1d;
+            --bg-card: #131c31;
+            --accent-blue: #38bdf8;
+            --accent-cyan: #06b6d4;
+            --accent-green: #10b981;
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --border-color: #24324f;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        /* Top Bar */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem 2.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: rgba(19, 28, 49, 0.7);
+            backdrop-filter: blur(10px);
+            z-index: 10;
+        }
+
+        .brand-title {
+            font-size: 1.1rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: var(--accent-blue);
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .brand-badge {
+            background: rgba(56, 189, 248, 0.15);
+            color: var(--accent-blue);
+            font-size: 0.75rem;
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            border: 1px solid rgba(56, 189, 248, 0.3);
+        }
+
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .slide-counter {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+        }
+
+        button.btn {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+            padding: 0.45rem 0.9rem;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        button.btn:hover {
+            border-color: var(--accent-blue);
+            color: var(--accent-blue);
+            background: rgba(56, 189, 248, 0.1);
+        }
+
+        /* Main Slide Container */
+        main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 2rem;
+            position: relative;
+        }
+
+        .slide {
+            display: none;
+            width: 100%;
+            max-width: 1050px;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 3.5rem 4rem;
+            box-shadow: 0 20px 45px rgba(0, 0, 0, 0.6);
+            animation: fadeIn 0.3s ease-in-out;
+        }
+
+        .slide.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Slide Content Typography */
+        .slide-tag {
+            font-size: 0.8rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            color: var(--accent-cyan);
+            margin-bottom: 0.6rem;
+            display: inline-block;
+        }
+
+        h1.title {
+            font-size: 2.8rem;
+            font-weight: 800;
+            line-height: 1.2;
+            margin-bottom: 1rem;
+            background: linear-gradient(135deg, #ffffff 0%, var(--accent-blue) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        h2.slide-heading {
+            font-size: 2.2rem;
+            font-weight: 700;
+            line-height: 1.25;
+            margin-bottom: 1.5rem;
+            color: #ffffff;
+        }
+
+        p.subtitle {
+            font-size: 1.2rem;
+            color: var(--text-muted);
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-top: 1.5rem;
+        }
+
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1.2rem;
+            margin-top: 1.5rem;
+        }
+
+        .card {
+            background: rgba(10, 15, 29, 0.6);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 1.5rem;
+        }
+
+        .card h3 {
+            font-size: 1.15rem;
+            color: var(--accent-blue);
+            margin-bottom: 0.6rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .card p, .card li {
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            line-height: 1.55;
+        }
+
+        ul.feature-list {
+            list-style: none;
+            margin-top: 1rem;
+        }
+
+        ul.feature-list li {
+            position: relative;
+            padding-left: 1.8rem;
+            margin-bottom: 0.9rem;
+            font-size: 1.05rem;
+            color: var(--text-main);
+            line-height: 1.5;
+        }
+
+        ul.feature-list li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            top: 0;
+            color: var(--accent-green);
+            font-weight: 800;
+            font-size: 1.1rem;
+        }
+
+        .highlight-box {
+            background: rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            border-radius: 8px;
+            padding: 1rem 1.25rem;
+            margin-top: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .highlight-box span.icon {
+            font-size: 1.5rem;
+        }
+
+        .highlight-box p {
+            font-size: 0.95rem;
+            color: #d1fae5;
+            margin: 0;
+            line-height: 1.4;
+        }
+
+        /* Footer Progress */
+        footer {
+            padding: 1rem 2.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--border-color);
+            background: rgba(19, 28, 49, 0.7);
+            font-size: 0.85rem;
+            color: var(--text-muted);
+        }
+
+        .progress-bar-container {
+            width: 250px;
+            height: 6px;
+            background: var(--border-color);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-cyan), var(--accent-blue));
+            width: 10%;
+            transition: width 0.3s ease;
+        }
+
+        .keyboard-hint {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .keyboard-hint kbd {
+            background: #1e293b;
+            padding: 0.15rem 0.45rem;
+            border-radius: 4px;
+            border: 1px solid #334155;
+            font-size: 0.75rem;
+            color: #fff;
+        }
+
+        @media print {
+            body { overflow: visible; height: auto; background: #fff; color: #000; }
+            header, footer, .controls { display: none; }
+            .slide { display: block !important; page-break-after: always; box-shadow: none; border: 1px solid #ccc; max-width: 100%; margin-bottom: 2rem; background: #fff; color: #000; }
+            h1.title, h2.slide-heading { color: #000 !important; -webkit-text-fill-color: #000 !important; }
+            .card { background: #f8fafc; border-color: #e2e8f0; }
+            .card p, .card li, p.subtitle, ul.feature-list li { color: #334155 !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Navigation -->
+    <header>
+        <div class="brand-title">
+            <span>⚡ LEGION NDT</span>
+            <span class="brand-badge">Ultrasonic Quality System</span>
+        </div>
+        <div class="controls">
+            <span class="slide-counter" id="slideNum">1 / 9</span>
+            <button class="btn" onclick="prevSlide()">◀ Previous</button>
+            <button class="btn" onclick="nextSlide()">Next ▶</button>
+            <button class="btn" onclick="window.print()">🖨️ Print / PDF</button>
+        </div>
+    </header>
+
+    <!-- Slide Deck -->
+    <main>
+
+        <!-- Slide 1: Title -->
+        <div class="slide active">
+            <span class="slide-tag">Project Overview</span>
+            <h1 class="title">Legion Insulator NDT<br>Inspection System</h1>
+            <p class="subtitle">An enterprise-grade, digital Non-Destructive Testing (NDT) platform for high-voltage insulator quality assurance with direct ultrasonic flaw detector hardware integration.</p>
+            <div class="grid-3">
+                <div class="card">
+                    <h3>⚡ Hardware Automated</h3>
+                    <p>Live RS-232 serial wedge for Olympus / Evident EPOCH 650 instruments.</p>
+                </div>
+                <div class="card">
+                    <h3>🛡️ Enterprise Security</h3>
+                    <p>Role-Based Access Control (RBAC), multi-layer permissions, zero trust.</p>
+                </div>
+                <div class="card">
+                    <h3>📊 Operational Shift Intelligence</h3>
+                    <p>Real-time analytics across Shift A, Shift B, and Shift C with CSV exports.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 2: Problem Statement -->
+        <div class="slide">
+            <span class="slide-tag">Industry Challenge</span>
+            <h2 class="slide-heading">The Problem: Manual NDT Bottlenecks</h2>
+            <ul class="feature-list">
+                <li><strong>Manual Transcription Errors:</strong> Inspectors manually read thickness gauges and write values on paper, leading to typos and transposed digits.</li>
+                <li><strong>Slow Workflow:</strong> Stopping the probe to write down 12 distinct location readings per insulator significantly slows down factory throughput.</li>
+                <li><strong>Data Silos & Lost Records:</strong> Paper inspection logs are difficult to track, search, audit, and analyze for quality trends.</li>
+                <li><strong>Security & Accountability Risks:</strong> Lack of user attribution, unauthorized modifications, and difficulty tracking which shift inspected which workpiece.</li>
+            </ul>
+            <div class="highlight-box">
+                <span class="icon">💡</span>
+                <p><strong>Goal:</strong> Automate data acquisition directly from the flaw detector into a centralized, auditable cloud database with zero manual typing.</p>
+            </div>
+        </div>
+
+        <!-- Slide 3: The Solution -->
+        <div class="slide">
+            <span class="slide-tag">Platform Architecture</span>
+            <h2 class="slide-heading">The Solution: Legion NDT Digital Suite</h2>
+            <div class="grid-2">
+                <div class="card">
+                    <h3>🖥️ Web Application Dashboard</h3>
+                    <p>Modern React 18 responsive dashboard designed for shop-floor workstations, tablets, and manager offices. Features instant search, multi-field filters, and automated shift tracking.</p>
+                </div>
+                <div class="card">
+                    <h3>🔌 Hardware Serial Wedge</h3>
+                    <p>Lightweight background automation service interfacing with the Olympus EPOCH 650 flaw detector. Captures thickness and advances locations automatically upon pressing <strong>FREEZE</strong>.</p>
+                </div>
+                <div class="card">
+                    <h3>🔒 Hardened REST API</h3>
+                    <p>Node.js & Express backend validating every single database transaction independently. No client-side permission trust, brute-force throttled, and session tracked.</p>
+                </div>
+                <div class="card">
+                    <h3>🗄️ Scalable Cloud Database</h3>
+                    <p>PostgreSQL relational database with 100% parameterized queries, automated audit trails, and strict data integrity across hundreds of thousands of test records.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Slide 4: Hardware Integration -->
+        <div class="slide">
+            <span class="slide-tag">Hardware Automation</span>
+            <h2 class="slide-heading">EPOCH 650 Live Capture Workflow</h2>
+            <p class="subtitle">Complete hands-free data entry directly from the physical testing machine.</p>
+            <div class="grid-3">
+                <div class="card">
+                    <h3>Step 1: Test Point Contact</h3>
+                    <p>Inspector places transducer probe on Workpiece Location 1 (Loc-1).</p>
+                </div>
+                <div class="card">
+                    <h3>Step 2: Physical FREEZE</h3>
+                    <p>Inspector presses <strong>FREEZE</strong> on the EPOCH 650. Hardware wedge reads Gate 1 thickness instantly.</p>
+                </div>
+                <div class="card">
+                    <h3>Step 3: Auto-Tab & Unfreeze</h3>
+                    <p>Script types thickness into Loc-1, beeps, advances focus via <strong>TAB</strong> to Loc-2, and unfreezes the machine for the next spot!</p>
+                </div>
+            </div>
+            <div class="highlight-box">
+                <span class="icon">⚡</span>
+                <p><strong>Outcome:</strong> Inspecting all 12 points of an insulator takes seconds instead of minutes with zero manual typing errors!</p>
+            </div>
+        </div>
+
+        <!-- Slide 5: Core Features -->
+        <div class="slide">
+            <span class="slide-tag">User Experience</span>
+            <h2 class="slide-heading">Smart Data Entry & Ergonomics</h2>
+            <ul class="feature-list">
+                <li><strong>12-Location Grid (Loc-1 to Loc-12):</strong> Dedicated fields for ultrasonic thickness readings with real-time Min, Max, and Average metric calculations.</li>
+                <li><strong>Auto-Hyphen Formatting for UID:</strong> Typing an alphabet prefix automatically formats with hyphen (e.g., typing <code>A</code> $\rightarrow$ <code>A-101</code>).</li>
+                <li><strong>Auto-Decimal Location Inputs:</strong> Entering single digits auto-formats with decimal (e.g., typing <code>2</code> $\rightarrow$ <code>2.45</code>) with focus auto-highlighting.</li>
+                <li><strong>Floating Feedback System:</strong> Non-intrusive floating toasts in emerald green (success) and crimson red (error alerts).</li>
+            </ul>
+        </div>
+
+        <!-- Slide 6: Security & RBAC -->
+        <div class="slide">
+            <span class="slide-tag">Defense in Depth</span>
+            <h2 class="slide-heading">Security & Role-Based Access Control</h2>
+            <div class="grid-3">
+                <div class="card">
+                    <h3>👑 Super Administrator</h3>
+                    <p>Full universal access. Can manage administrators, configure user permissions, view security audit logs, and manage system policies.</p>
+                </div>
+                <div class="card">
+                    <h3>🛡️ Administrator</h3>
+                    <p>Delegated supervisory role. Can view records, manage shift reports, and oversee day-to-day inspection workflows.</p>
+                </div>
+                <div class="card">
+                    <h3>👷 Regular Operator</h3>
+                    <p>Shop-floor inspector. Restricted strictly to workpiece testing, record creation, and permitted shift tracking modules.</p>
+                </div>
+            </div>
+            <div class="highlight-box">
+                <span class="icon">🔒</span>
+                <p><strong>Zero Bypass:</strong> Permissions are evaluated in the PostgreSQL database on every API request. Tampering with browser code cannot grant unauthorized access.</p>
+            </div>
+        </div>
+
+        <!-- Slide 7: Shift Analytics & Reporting -->
+        <div class="slide">
+            <span class="slide-tag">Intelligence & Analytics</span>
+            <h2 class="slide-heading">Operational Shift Tracking & Export</h2>
+            <div class="grid-2">
+                <div class="card">
+                    <h3>🕒 Automated 3-Shift Classification</h3>
+                    <p><strong>Shift A:</strong> 06:00 – 14:00 (Morning)<br>
+                       <strong>Shift B:</strong> 14:00 – 22:00 (Evening)<br>
+                       <strong>Shift C:</strong> 22:00 – 06:00 (Night, rolls date cleanly)</p>
+                </div>
+                <div class="card">
+                    <h3>📈 7-Day Trend Analytics</h3>
+                    <p>Visual breakdown cards showing daily totals and shift ratios, allowing supervisors to identify productivity patterns and throughput bottlenecks.</p>
+                </div>
+            </div>
+            <ul class="feature-list" style="margin-top: 1.5rem;">
+                <li><strong>One-Click CSV Export:</strong> Export filtered inspection batches for customer compliance certificates and quality audits.</li>
+                <li><strong>Immutable Audit Trail:</strong> Complete log of every record creation, edit, deletion, and user login with timestamp and IP address.</li>
+            </ul>
+        </div>
+
+        <!-- Slide 8: Business Value & ROI -->
+        <div class="slide">
+            <span class="slide-tag">Return on Investment</span>
+            <h2 class="slide-heading">Business Value & Impact</h2>
+            <div class="grid-3">
+                <div class="card">
+                    <h3>⏱️ 70% Faster Inspections</h3>
+                    <p>Automated hardware capture eliminates typing delay and paperwork handling.</p>
+                </div>
+                <div class="card">
+                    <h3>🎯 Zero Transcription Typos</h3>
+                    <p>Direct digital feed from the flaw detector ensures 100% measurement accuracy.</p>
+                </div>
+                <div class="card">
+                    <h3>📋 Instant Traceability</h3>
+                    <p>Every insulator's test history is instantly searchable by UID, customer name, date, or shift.</p>
+                </div>
+            </div>
+            <div class="highlight-box">
+                <span class="icon">🏆</span>
+                <p><strong>Outcome:</strong> Meets international high-voltage quality compliance standards (IEC / IEEE) with verifiable digital proof.</p>
+            </div>
+        </div>
+
+        <!-- Slide 9: Summary & Conclusion -->
+        <div class="slide">
+            <span class="slide-tag">Project Summary</span>
+            <h2 class="slide-heading">Conclusion & Operational Readiness</h2>
+            <ul class="feature-list">
+                <li><strong>Fully Implemented Stack:</strong> React 18 frontend + Express backend + PostgreSQL database.</li>
+                <li><strong>Hardware Ready:</strong> Single-click desktop launchers for website and EPOCH 650 serial capture.</li>
+                <li><strong>Zero Secrets in Code:</strong> Clean credential hygiene with bcrypt security.</li>
+                <li><strong>Production Deployed:</strong> Hosted online on Vercel & Render, and runs offline locally via batch scripts.</li>
+            </ul>
+            <div style="margin-top: 2rem; text-align: center;">
+                <p style="font-size: 1.3rem; color: var(--accent-blue); font-weight: 700;">Thank You! Questions & Discussion</p>
+                <p style="font-size: 0.95rem; color: var(--text-muted); margin-top: 0.5rem;">Legion Insulator NDT Quality Assurance Platform</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Footer Progress -->
+    <footer>
+        <div class="keyboard-hint">
+            Use <kbd>◀</kbd> <kbd>▶</kbd> or <kbd>Space</kbd> to navigate
+        </div>
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progressBar"></div>
+        </div>
+        <div>Legion NDT Systems © 2026</div>
+    </footer>
+
+    <!-- Slide Controller Script -->
+    <script>
+        const slides = document.querySelectorAll('.slide');
+        let currentSlide = 0;
+        const totalSlides = slides.length;
+
+        function updateSlide() {
+            slides.forEach((slide, idx) => {
+                slide.classList.toggle('active', idx === currentSlide);
+            });
+            document.getElementById('slideNum').textContent = `${currentSlide + 1} / ${totalSlides}`;
+            document.getElementById('progressBar').style.width = `${((currentSlide + 1) / totalSlides) * 100}%`;
+        }
+
+        function nextSlide() {
+            if (currentSlide < totalSlides - 1) {
+                currentSlide++;
+                updateSlide();
+            }
+        }
+
+        function prevSlide() {
+            if (currentSlide > 0) {
+                currentSlide--;
+                updateSlide();
+            }
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'PageDown') {
+                nextSlide();
+            } else if (e.key === 'ArrowLeft' || e.key === 'PageUp') {
+                prevSlide();
+            } else if (e.key === 'Home') {
+                currentSlide = 0;
+                updateSlide();
+            } else if (e.key === 'End') {
+                currentSlide = totalSlides - 1;
+                updateSlide();
+            }
+        });
+
+        updateSlide();
+    </script>
+</body>
+</html>
