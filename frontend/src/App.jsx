@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { useAuth } from "./AuthContext.jsx";
 import { useToast } from "./ToastContext.jsx";
 import Login from "./Login.jsx";
@@ -386,6 +386,7 @@ function MainApp() {
     const { user, logout, hasPermission } = useAuth();
     const toast = useToast();
     const isSuperAdmin = user?.role === "superadmin";
+    const uidInputRef = useRef(null);
 
     // Permission flags for UI controls
     const canViewOverview = isSuperAdmin || hasPermission("overview", "view");
@@ -668,6 +669,14 @@ function MainApp() {
                 record_date: getCurrentDate(),
                 record_time: getCurrentTime()
             }));
+
+            // Auto-focus directly into the UID field for next workpiece
+            setTimeout(() => {
+                if (uidInputRef.current) {
+                    uidInputRef.current.focus();
+                    uidInputRef.current.select?.();
+                }
+            }, 60);
 
             await loadAllRecords();
             await loadLast7Days();
@@ -1212,9 +1221,18 @@ function MainApp() {
                                             <label className="field">
                                                 <span className="field-label-req">UID Number *</span>
                                                 <input
+                                                    ref={uidInputRef}
                                                     type="text"
                                                     value={form.uid}
                                                     onChange={(e) => handleFormChange("uid", e.target.value)}
+                                                    onFocus={(e) => e.target.select()}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === "Enter") {
+                                                            e.preventDefault();
+                                                            const firstLoc = document.querySelector(".field-grid-loc input");
+                                                            firstLoc?.focus();
+                                                        }
+                                                    }}
                                                     placeholder="e.g. A-101"
                                                     required
                                                 />
@@ -1226,6 +1244,7 @@ function MainApp() {
                                                     type="date"
                                                     value={form.record_date}
                                                     readOnly
+                                                    tabIndex={-1}
                                                     className="readonly-input"
                                                 />
                                             </label>
@@ -1236,6 +1255,7 @@ function MainApp() {
                                                     type="time"
                                                     value={form.record_time.slice(0, 5)}
                                                     readOnly
+                                                    tabIndex={-1}
                                                     className="readonly-input"
                                                 />
                                             </label>
