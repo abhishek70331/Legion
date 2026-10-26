@@ -1473,7 +1473,7 @@ app.post("/api/data", requireAuth, requirePermission("records", "create"), async
 
         const savedRecord = result.rows[0];
 
-        await logAuditEvent({
+        logAuditEvent({
             actorId: req.user.id,
             actorUsername: req.user.username,
             action: "RECORD_CREATED",
@@ -1481,7 +1481,7 @@ app.post("/api/data", requireAuth, requirePermission("records", "create"), async
             targetId: `${headingUpper}|${customerUpper}|${uidUpper}`,
             details: { heading: headingUpper, customer_name: customerUpper, uid: uidUpper },
             ipAddress: req.ip
-        });
+        }).catch((err) => console.error("Audit log error:", err?.message));
 
         res.status(201).json({
             message: "Record created successfully",

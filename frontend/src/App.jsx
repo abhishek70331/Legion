@@ -653,6 +653,21 @@ function MainApp() {
                 throw new Error("Record could not be saved to the database. Please try again.");
             }
 
+            const savedItem = createResponse.data;
+
+            // Instantly prepend saved record to local table (zero wait)
+            setAllRecords((prev) => {
+                const list = Array.isArray(prev) ? prev : [];
+                const filtered = list.filter(
+                    (r) => !(
+                        String(r.heading).toUpperCase() === String(savedItem.heading).toUpperCase() &&
+                        String(r.customer_name).toUpperCase() === String(savedItem.customer_name).toUpperCase() &&
+                        String(r.uid).toUpperCase() === String(savedItem.uid).toUpperCase()
+                    )
+                );
+                return [savedItem, ...filtered];
+            });
+
             setSaveMessage({
                 type: "success",
                 text: `Inspection for ${customerName} (UID: ${uid}) saved successfully.`
@@ -664,11 +679,15 @@ function MainApp() {
                 currentShift.name
             );
 
+            // Reset form immediately
             setForm((prev) => ({
                 ...emptyForm(heading, customerName),
                 record_date: getCurrentDate(),
                 record_time: getCurrentTime()
             }));
+
+            // Release saving state immediately so button unlocks in ~0.05s
+            setSaving(false);
 
             // Auto-focus directly into the UID field for next workpiece
             setTimeout(() => {
@@ -676,10 +695,15 @@ function MainApp() {
                     uidInputRef.current.focus();
                     uidInputRef.current.select?.();
                 }
-            }, 60);
+            }, 30);
 
-            await loadAllRecords();
-            await loadLast7Days();
+            // Refresh analytical summaries in background asynchronously without blocking the UI
+            Promise.all([
+                loadAllRecords(),
+                loadLast7Days()
+            ]).catch((err) => {
+                console.error("Background summary refresh error:", err);
+            });
         } catch (error) {
             const errText = getErrorMessage(error, "Failed to save record.");
             setSaveMessage({
