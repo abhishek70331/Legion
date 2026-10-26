@@ -642,6 +642,10 @@ app.patch("/api/users/:id", requireAuth, requirePermission("user_management", "e
         if (target.role === "superadmin" && req.user.role !== "superadmin") {
             return res.status(403).json({ message: "Only a Super Admin can modify a Super Admin account." });
         }
+        // Non-superadmin cannot edit another admin
+        if (target.role === "admin" && req.user.role !== "superadmin" && target.id !== req.user.id) {
+            return res.status(403).json({ message: "Only a Super Admin can modify an Administrator account." });
+        }
 
         const email = req.body.email !== undefined ? (req.body.email ? String(req.body.email).trim() : null) : undefined;
         const fullName = req.body.full_name !== undefined ? (req.body.full_name ? String(req.body.full_name).trim() : null) : undefined;
@@ -737,6 +741,9 @@ app.patch("/api/users/:id/password", requireAuth, requirePermission("user_manage
         if (target.role === "superadmin" && req.user.role !== "superadmin") {
             return res.status(403).json({ message: "Only a Super Admin can reset a Super Admin's password." });
         }
+        if (target.role === "admin" && req.user.role !== "superadmin" && target.id !== req.user.id) {
+            return res.status(403).json({ message: "Only a Super Admin can reset an Administrator's password." });
+        }
 
         const hash = await hashPassword(password);
         await pool.query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, id]);
@@ -786,6 +793,9 @@ app.patch("/api/users/:id/status", requireAuth, requirePermission("user_manageme
         if (target.role === "superadmin" && req.user.role !== "superadmin") {
             return res.status(403).json({ message: "Only a Super Admin can change a Super Admin's account status." });
         }
+        if (target.role === "admin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can change an Administrator's account status." });
+        }
 
         const isBanned = newStatus === "suspended";
         await pool.query(
@@ -833,6 +843,9 @@ app.delete("/api/users/:id", requireAuth, requirePermission("user_management", "
         if (target.role === "superadmin" && req.user.role !== "superadmin") {
             return res.status(403).json({ message: "Only a Super Admin can delete a Super Admin account." });
         }
+        if (target.role === "admin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can delete an Administrator account." });
+        }
 
         await pool.query("DELETE FROM users WHERE id = $1", [id]);
 
@@ -862,8 +875,16 @@ app.post("/api/users/:id/logout", requireAuth, requirePermission("user_managemen
             return res.status(400).json({ message: "Use the Sign Out button to terminate your current session." });
         }
 
-        const exists = await pool.query("SELECT id, username FROM users WHERE id = $1", [id]);
-        if (!exists.rows[0]) return res.status(404).json({ message: "User not found" });
+        const exists = await pool.query("SELECT id, username, role FROM users WHERE id = $1", [id]);
+        const targetUser = exists.rows[0];
+        if (!targetUser) return res.status(404).json({ message: "User not found" });
+
+        if (targetUser.role === "superadmin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can terminate a Super Admin's sessions." });
+        }
+        if (targetUser.role === "admin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can terminate an Administrator's sessions." });
+        }
 
         const result = await pool.query("DELETE FROM active_sessions WHERE user_id = $1", [id]);
 
@@ -923,6 +944,9 @@ app.put("/api/permissions/:userId", requireAuth, requirePermission("permission_m
 
         if (targetUser.role === "superadmin") {
             return res.status(400).json({ message: "Super Admin accounts have full universal permissions and cannot have permissions restricted." });
+        }
+        if (targetUser.role === "admin" && req.user.role !== "superadmin") {
+            return res.status(403).json({ message: "Only a Super Admin can modify an Administrator's permissions." });
         }
 
         const requestedPermissions = req.body.permissions || {};
@@ -1041,7 +1065,7 @@ app.get("/api/audit-logs", requireAuth, requirePermission("audit_logs", "view"),
     }
 });
 
-app.get("/api/admin/metrics", requireAuth, async (req, res) => {
+app.get("/api/admin/metrics", requireAuth, requirePermission("user_management", "view"), async (req, res) => {
     try {
         const userStats = await pool.query(`
             SELECT
